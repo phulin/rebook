@@ -1,6 +1,6 @@
 import cv2
 import numpy as np
-from skimage.filters import threshold_sauvola
+from skimage.filters import threshold_sauvola, threshold_niblack
 
 cross33 = cv2.getStructuringElement(cv2.MORPH_CROSS, (3, 3))
 def gradient(im):
@@ -14,11 +14,73 @@ def vert_close(im):
     vert = cv2.getStructuringElement(cv2.MORPH_RECT, (1, space_width))
     return cv2.morphologyEx(im, cv2.MORPH_CLOSE, vert)
 
-def sauvola(im):
-    thresh = threshold_sauvola(im, window_size=len(im) / 400 * 2 + 1)
+def sauvola(im, window_factor=200, k=0.2, thresh_factor=1.0):
+    thresh = threshold_sauvola(im, window_size=len(im) / window_factor * 2 + 1)
+    booleans = im > (thresh * thresh_factor)
+    ints = booleans.astype(np.uint8) * 255
+    return ints
+
+def niblack(im):
+    thresh = threshold_niblack(im, window_size=len(im) / 200 * 2 + 1)
     booleans = im > (thresh * 1.0)
     ints = booleans.astype(np.uint8) * 255
     return ints
+
+def kittler(im):
+    h, g = np.histogram(im.ravel(), 256, [0, 256])
+    h = h.astype(np.float)
+    g = g.astype(np.float)
+    g = g[:-1]
+    c = np.cumsum(h)
+    m = np.cumsum(h * g)
+    s = np.cumsum(h * g**2)
+    sigma_f = np.sqrt(s/c - (m/c)**2)
+    cb = c[-1] - c
+    mb = m[-1] - m
+    sb = s[-1] - s
+    sigma_b = np.sqrt(sb/cb - (mb/cb)**2)
+    p = c / c[-1]
+    v = p * np.log(sigma_f) + (1-p)*np.log(sigma_b) - \
+        p*np.log(p) - (1-p)*np.log(1-p)
+    v[~np.isfinite(v)] = np.inf
+    idx = np.argmin(v)
+    t = g[idx]
+    _, thresh = cv2.threshold(im, t, 255, cv2.THRESH_BINARY)
+    return thresh
+
+def roth(im, s=51, t=0.8):
+    im_h, im_w = im.shape
+    means = cv2.blur(im, (s, s))
+    booleans = im > means * t
+    ints = booleans.astype(np.uint8) * 255
+    return ints
+
+# s = stroke width
+def kamel(im, s=None, T=25):
+    im_h, im_w = im.shape
+    if s is None or s <= 0:
+        s = im_h / 200
+    size = 2 * s + 1
+    means = cv2.blur(im, (size, size), borderType=cv2.BORDER_REFLECT_101)
+    padded = np.pad(means, (s, s), 'edge')
+    im_plus_T = im.astype(np.int64) + T
+    im_plus_T = im_plus_T.clip(min=0, max=255).astype(np.uint8)
+    L1 = padded[0:im_h, 0:im_w] < im_plus_T
+    L2 = padded[0:im_h, s:im_w + s] < im_plus_T
+    L3 = padded[0:im_h, 2 * s:im_w + 2 * s] < im_plus_T
+    L4 = padded[s:im_h + s, 2 * s:im_w + 2 * s] < im_plus_T
+    L5 = padded[2 * s:im_h + 2 * s, 2 * s:im_w + 2 * s] < im_plus_T
+    L6 = padded[2 * s:im_h + 2 * s, s:im_w + s] < im_plus_T
+    L7 = padded[2 * s:im_h + 2 * s, 0:im_w] < im_plus_T
+    L0 = padded[s:im_h + s, 0:im_w] < im_plus_T
+    b = (L0 & L1 & L4 & L5) | (L1 & L2 & L5 & L6) | \
+        (L2 & L3 & L6 & L7) | (L3 & L4 & L7 & L0)
+
+    return b.astype(np.uint8) * 255
+
+def otsu(im):
+    _, thresh = cv2.threshold(im, 0, 255, cv2.THRESH_BINARY | cv2.THRESH_OTSU)
+    return thresh
 
 def text_contours(im):
     im_w, im_h = len(im[0]), len(im)
@@ -67,4 +129,3 @@ def text_contours(im):
             i = hierarchy[i][0]
 
     return good_contours, bad_contours
-
