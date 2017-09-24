@@ -114,9 +114,10 @@ cross55 = cv2.getStructuringElement(cv2.MORPH_CROSS, (5, 5))
 def sauvola(im):
     im = im.copy()
     global thresh
-    thresh = threshold_sauvola(im, window_size=len(im) / 200)
+    thresh = threshold_sauvola(im, window_size=len(im) / 400 * 2 + 1)
     booleans = im > (thresh * 1.0)
     ints = booleans.astype(np.uint8) * 255
+    cv2.imwrite('sauvola.png', ints)
     return ints
 
 transforms = [

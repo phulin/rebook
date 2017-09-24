@@ -3,13 +3,10 @@ import sys
 import os
 import re
 import numpy as np
-from multiprocessing.pool import ThreadPool
 from skimage.filters import threshold_sauvola
 
 indir = sys.argv[1]
 outdir = sys.argv[2]
-
-pool = ThreadPool(2)
 
 files = filter(lambda f: re.search('.(png|jpg|tif)$', f), os.listdir(indir))
 
@@ -26,21 +23,17 @@ def vert_close(im):
     return cv2.morphologyEx(im, cv2.MORPH_CLOSE, vert)
 
 def sauvola(im):
-    thresh = threshold_sauvola(im, window_size=len(im) / 300)
+    thresh = threshold_sauvola(im, window_size=len(im) / 400 * 2 + 1)
     booleans = im > (thresh * 1.0)
     ints = booleans.astype(np.uint8) * 255
     return ints
 
-def crop(im):
+def text_contours(im):
     im_w, im_h = len(im[0]), len(im)
     min_feature_size = im_h / 300
 
-    grad = gradient(im)
-    copy = vert_close(grad).copy()
+    copy = im.copy()
     cv2.rectangle(copy, (0, 0), (im_w, im_h), 255, 3)
-    cv2.imwrite("grad.png", grad)
-    cv2.imwrite("vert_close.png", copy)
-    debug = cv2.cvtColor(im, cv2.COLOR_GRAY2RGB)
     contours, [hierarchy] = \
         cv2.findContours(copy, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
 
@@ -58,7 +51,7 @@ def crop(im):
             j = hierarchy[j][0]
         i = hierarchy[i][0]
 
-    crop_x0, crop_y0, crop_x1, crop_y1 = im_w, im_h, 0, 0
+    good_contours, bad_contours = [], []
     for hole in good_holes:
         x, y, w, h = cv2.boundingRect(contours[hole])
         print "hole:", x, y, w, h
@@ -67,6 +60,7 @@ def crop(im):
         while i >= 0:
             c = contours[i]
             x, y, w, h = cv2.boundingRect(c)
+            print 'contour:', x, y, w, h
             if len(c) > 10 \
                     and h < 3 * w \
                     and w > min_feature_size \
@@ -75,12 +69,36 @@ def crop(im):
                     and x + w < 0.98 * im_w \
                     and y > 0.02 * im_h \
                     and y + h < 0.98 * im_h:
-                crop_x0 = min(x, crop_x0)
-                crop_y0 = min(y, crop_y0)
-                crop_x1 = max(x + w, crop_x1)
-                crop_y1 = max(y + h, crop_y1)
-                cv2.rectangle(debug, (x, y), (x + w, y + h), (0, 255, 0), 4)
+                good_contours.append(c)
+            else:
+                bad_contours.append(c)
             i = hierarchy[i][0]
+
+    return good_contours, bad_contours
+
+def crop(im):
+    im_w, im_h = len(im[0]), len(im)
+
+    grad = gradient(im)
+    closed = vert_close(grad)
+    cv2.imwrite("grad.png", grad)
+    cv2.imwrite("vert_close.png", closed)
+
+    good_contours, bad_contours = text_contours(closed)
+
+    debug = cv2.cvtColor(im, cv2.COLOR_GRAY2RGB)
+
+    crop_x0, crop_y0, crop_x1, crop_y1 = im_w, im_h, 0, 0
+    for c in good_contours:
+        x, y, w, h = cv2.boundingRect(c)
+        crop_x0 = min(x, crop_x0)
+        crop_y0 = min(y, crop_y0)
+        crop_x1 = max(x + w, crop_x1)
+        crop_y1 = max(y + h, crop_y1)
+        cv2.rectangle(debug, (x, y), (x + w, y + h), (0, 255, 0), 4)
+    for c in bad_contours:
+        x, y, w, h = cv2.boundingRect(c)
+        cv2.rectangle(debug, (x, y), (x + w, y + h), (0, 0, 255), 4)
 
     cv2.imwrite("debug.png", debug)
 
@@ -94,6 +112,10 @@ def crop(im):
 def go(fn):
     print fn
     inpath = os.path.join(indir, fn)
+    outpath = os.path.join(outdir, fn)
+    if os.path.isfile(outpath):
+        print'skipping', outpath
+        return
     img = cv2.imread(inpath, 0)
     img = cv2.GaussianBlur(img, (5, 5), 0)
     img = cv2.resize(img, (0, 0), None, 1.5, 1.5)
@@ -104,8 +126,6 @@ def go(fn):
     bw = sauvola(img)
     print fn, 'thresholded'
     bw = crop(bw)
-    # ret, th = cv2.threshold(img, 0, 255, cv2.THRESH_BINARY+cv2.THRESH_OTSU)
-    outpath = os.path.join(outdir, fn)
     cv2.imwrite(outpath, bw)
 
 for fn in files:
