@@ -4,7 +4,7 @@ import sys
 import numpy as np
 import matplotlib.pyplot as plt
 
-from lib import text_contours, sauvola, niblack, otsu, kittler, roth, kamel
+from lib import text_contours, sauvola, niblack, otsu, kittler, roth, kamel, yan
 
 inpath = sys.argv[1]
 original = cv2.imread(inpath, cv2.CV_LOAD_IMAGE_GRAYSCALE)
@@ -66,6 +66,7 @@ options = [
     # ('Sauvola-1.0', sauvola),
     ('Roth', roth),
     ('Kamel/Zhao', kamel),
+    ('Yan', yan),
     ('Otsu', lambda im: otsu(clahe.apply(im))),
 ]
 

@@ -78,6 +78,30 @@ def kamel(im, s=None, T=25):
 
     return b.astype(np.uint8) * 255
 
+def row_zero_run_lengths(row):
+    bounded = np.hstack(([255], row, [255]))
+    diffs = np.diff(bounded)
+    run_starts, = np.where(diffs < 0)
+    run_ends, = np.where(diffs > 0)
+    return run_ends - run_starts
+
+def horiz_zero_run_lengths(im):
+    return np.hstack(map(row_zero_run_lengths, im))
+
+def yan(im):
+    im_h, im_w = im.shape
+    first_pass = kamel(im)
+
+    horiz_runs = horiz_zero_run_lengths(first_pass)
+    vert_runs = horiz_zero_run_lengths(first_pass.T)
+    run_length_hist, = np.histogram(np.hstack((horiz_runs, vert_runs)),
+                                    bins=np.arange(1, im_h / 100))[:-1]
+    candidates, = np.where(run_length_hist > run_length_hist.max() * .8)
+    stroke_width = int(round(candidates.mean()))
+
+    # TODO: determine T
+    return kamel(im, s=stroke_width)
+
 def otsu(im):
     _, thresh = cv2.threshold(im, 0, 255, cv2.THRESH_BINARY | cv2.THRESH_OTSU)
     return thresh
