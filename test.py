@@ -4,7 +4,7 @@ import sys
 import numpy as np
 import matplotlib.pyplot as plt
 
-from lib import text_contours, sauvola, niblack, otsu, kittler, roth, kamel, yan
+from lib import text_contours, sauvola, niblack, otsu, kittler, roth, kamel, yan, su2010
 
 inpath = sys.argv[1]
 original = cv2.imread(inpath, cv2.CV_LOAD_IMAGE_GRAYSCALE)
@@ -49,8 +49,8 @@ cross55 = cv2.getStructuringElement(cv2.MORPH_CROSS, (5, 5))
 
 transforms = [
     # ('Bilateral', lambda im: cv2.bilateralFilter(im, 5, 75, 41)),
-    ('Gaussian', lambda im: cv2.GaussianBlur(im, (5, 5), 0)),
-    ('Scale', lambda im: cv2.resize(im, (0, 0), None, 1.5, 1.5)),
+    ('Gaussian', lambda im: cv2.GaussianBlur(im, (9, 9), 0)),
+    ('Scale', lambda im: cv2.resize(im, (0, 0), None, 2.0, 2.0)),
     # ('Clahe', lambda im: clahe.apply(im)),
     # ('Sobel', lambda im: cv2.Sobel(im, -1, 1, 1, ksize=7)),
     # ('Morph', lambda im: cv2.morphologyEx(im, cv2.MORPH_CLOSE, cross33)),
@@ -64,10 +64,12 @@ transforms = [
 options = [
     # ('Sauvola-1.0/Clahe', lambda im: sauvola(clahe.apply(im), thresh_factor=1.0)),
     # ('Sauvola-1.0', sauvola),
-    ('Roth', roth),
-    ('Kamel/Zhao', kamel),
-    ('Yan', yan),
+    # ('Roth', roth),
+    # ('Kamel/Zhao', kamel),
+    ('Yan-0.3', lambda im: yan(im, alpha=0.3)),
+    ('Yan-0.65', lambda im: yan(im, alpha=0.65)),
     ('Otsu', lambda im: otsu(clahe.apply(im))),
+    ('Su', su2010),
 ]
 
 transforms2 = [
@@ -81,8 +83,8 @@ transforms2 = [
 def zoom(im, frac):
     height = len(im)
     width = len(im[0])
-    xlow = int(width * (0.3 - frac / 2))
-    xhigh = int(width * (0.3 + frac / 2))
+    xlow = int(width * (0.4 - frac / 2))
+    xhigh = int(width * (0.4 + frac / 2))
     ylow = int(height * (0.2 - frac / 2))
     yhigh = int(height * (0.2 + frac / 2))
     return im[ylow:yhigh, xlow:xhigh]
@@ -105,7 +107,7 @@ cv2.imwrite('out2.png', images[-1][1])
 
 for i, (title, im) in enumerate(images):
     plt.subplot(2, (len(images) + 1) / 2, i + 1)
-    im = zoom(im, 0.15)
+    im = zoom(im, 0.3)
     if im.dtype == np.uint8:
         plt.imshow(im, 'gray')
     else:

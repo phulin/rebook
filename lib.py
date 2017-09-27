@@ -1,5 +1,6 @@
 import cv2
 import numpy as np
+import IPython
 from skimage.filters import threshold_sauvola, threshold_niblack
 
 cross33 = cv2.getStructuringElement(cv2.MORPH_CROSS, (3, 3))
@@ -61,20 +62,20 @@ def kamel(im, s=None, T=25):
     if s is None or s <= 0:
         s = im_h / 200
     size = 2 * s + 1
-    means = cv2.blur(im, (size, size), borderType=cv2.BORDER_REFLECT_101)
+    means = cv2.blur(im, (size, size), borderType=cv2.BORDER_REFLECT)
     padded = np.pad(means, (s, s), 'edge')
     im_plus_T = im.astype(np.int64) + T
     im_plus_T = im_plus_T.clip(min=0, max=255).astype(np.uint8)
-    L1 = padded[0:im_h, 0:im_w] < im_plus_T
-    L2 = padded[0:im_h, s:im_w + s] < im_plus_T
-    L3 = padded[0:im_h, 2 * s:im_w + 2 * s] < im_plus_T
-    L4 = padded[s:im_h + s, 2 * s:im_w + 2 * s] < im_plus_T
-    L5 = padded[2 * s:im_h + 2 * s, 2 * s:im_w + 2 * s] < im_plus_T
-    L6 = padded[2 * s:im_h + 2 * s, s:im_w + s] < im_plus_T
-    L7 = padded[2 * s:im_h + 2 * s, 0:im_w] < im_plus_T
-    L0 = padded[s:im_h + s, 0:im_w] < im_plus_T
-    b = (L0 & L1 & L4 & L5) | (L1 & L2 & L5 & L6) | \
-        (L2 & L3 & L6 & L7) | (L3 & L4 & L7 & L0)
+    L1 = padded[0:im_h, 0:im_w] <= im_plus_T
+    L2 = padded[0:im_h, s:im_w + s] <= im_plus_T
+    L3 = padded[0:im_h, 2 * s:im_w + 2 * s] <= im_plus_T
+    L4 = padded[s:im_h + s, 2 * s:im_w + 2 * s] <= im_plus_T
+    L5 = padded[2 * s:im_h + 2 * s, 2 * s:im_w + 2 * s] <= im_plus_T
+    L6 = padded[2 * s:im_h + 2 * s, s:im_w + s] <= im_plus_T
+    L7 = padded[2 * s:im_h + 2 * s, 0:im_w] <= im_plus_T
+    L0 = padded[s:im_h + s, 0:im_w] <= im_plus_T
+    L04, L15, L26, L37 = L0 & L4, L1 & L5, L2 & L6, L3 & L7
+    b = (L04 & L15) | (L15 & L26) | (L26 & L37) | (L37 & L04)
 
     return b.astype(np.uint8) * 255
 
@@ -88,23 +89,67 @@ def row_zero_run_lengths(row):
 def horiz_zero_run_lengths(im):
     return np.hstack(map(row_zero_run_lengths, im))
 
-def yan(im):
+def yan(im, alpha=0.4):
     im_h, im_w = im.shape
-    first_pass = kamel(im)
+    first_pass = otsu(im)
 
     horiz_runs = horiz_zero_run_lengths(first_pass)
     vert_runs = horiz_zero_run_lengths(first_pass.T)
-    run_length_hist, = np.histogram(np.hstack((horiz_runs, vert_runs)),
-                                    bins=np.arange(1, im_h / 100))[:-1]
-    candidates, = np.where(run_length_hist > run_length_hist.max() * .8)
-    stroke_width = int(round(candidates.mean()))
+    run_length_hist, _ = np.histogram(np.hstack((horiz_runs, vert_runs)),
+                                      bins=np.arange(0, im_h / 100))
+    argmax = run_length_hist.argmax()
+    candidates, = np.where(run_length_hist[argmax:argmax+3] >
+                           run_length_hist[argmax] * .8)
+    stroke_width = candidates.max() + argmax
+    print 'stroke width:', stroke_width
 
-    # TODO: determine T
-    return kamel(im, s=stroke_width)
+    size = 2 * stroke_width + 1
+    means = cv2.blur(im, (size, size),
+                     borderType=cv2.BORDER_REFLECT)
+
+    element = cv2.getStructuringElement(cv2.MORPH_RECT, (size, size))
+    maxes = cv2.morphologyEx(im, cv2.MORPH_DILATE, element).astype(float)
+    mins = cv2.morphologyEx(im, cv2.MORPH_ERODE, element).astype(float)
+    # if means closer to max, probably more noisy gray levels
+    assert (maxes >= means).all() and (means >= mins).all()
+    Ts = np.where(maxes - means > means - mins,
+                  alpha / 3 * (mins + mins + means),
+                  alpha / 3 * (mins + means + means))
+
+    return kamel(im, s=stroke_width, T=Ts)
+
+def su2010(im, size=9, N_min=40):
+    element = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
+    maxes = cv2.morphologyEx(im, cv2.MORPH_DILATE, element,
+                             borderType=cv2.BORDER_REFLECT).astype(float)
+    mins = cv2.morphologyEx(im, cv2.MORPH_ERODE, element,
+                            borderType=cv2.BORDER_REFLECT).astype(float)
+
+    D_contrast = (maxes - mins) / (maxes + mins + 1e-10)
+    D_contrast = cv2.normalize(D_contrast, alpha=0, beta=255,
+                               norm_type=cv2.NORM_MINMAX, dtype=8)
+    _, high_contrast = cv2.threshold(D_contrast, 0, 255,
+                                     cv2.THRESH_BINARY | cv2.THRESH_OTSU)
+    # 1 if high contrast, 0 otherwise.
+    E_inv = high_contrast.astype(np.int64) & 1
+    im_high = E_inv * im
+
+    N_e = cv2.boxFilter(E_inv, -1, (size, size), normalize=False)
+
+    E_mean = im_high / N_e
+    E_std = np.sqrt(((im - E_mean) * E_inv) ** 2 / 2)
+    booleans = (N_e >= N_min) & (im <= E_mean + E_std / 2)
+    return cv2.bitwise_not(booleans.astype(np.uint8)) * 255
 
 def otsu(im):
     _, thresh = cv2.threshold(im, 0, 255, cv2.THRESH_BINARY | cv2.THRESH_OTSU)
     return thresh
+
+def hsl_gray(im):
+    assert len(im.shape) == 3
+    hls = cv2.cvtColor(im, cv2.COLOR_RGB2HLS)
+    _, l, s = cv2.split(hls)
+    return s, l
 
 def text_contours(im):
     im_w, im_h = len(im[0]), len(im)
