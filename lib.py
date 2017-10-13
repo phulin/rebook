@@ -68,8 +68,7 @@ def kittler(im):
 def roth(im, s=51, t=0.8):
     im_h, im_w = im.shape
     means = cv2.blur(im, (s, s))
-    booleans = im > means * t
-    ints = booleans.astype(np.uint8) * 255
+    ints = cv2.bitwise_not(bool_to_u8(im > means * t))
     debug_imwrite('roth.png', ints)
     return ints
 
@@ -242,7 +241,7 @@ def hsl_gray(im):
     _, l, s = cv2.split(hls)
     return s, l
 
-def text_contours(im):
+def text_contours(im, original):
     im_w, im_h = len(im[0]), len(im)
     min_feature_size = im_h / 300
 
@@ -274,14 +273,25 @@ def text_contours(im):
         while i >= 0:
             c = contours[i]
             x, y, w, h = cv2.boundingRect(c)
-            orig_slice = im[y:y + h, x:x + w]
-            # print 'mean:', orig_slice.mean(), 'horiz stddev:', orig_slice.mean(axis=0).std()
+            # print 'mean:', orig_slice.mean(), \
+            # 'horiz stddev:', orig_slice.mean(axis=0).std()
             # print 'contour:', x, y, w, h
             if len(c) > 10 \
                     and h < 2 * w \
                     and w > min_feature_size \
                     and h > min_feature_size:
-                good_contours.append(c)
+                mask = np.zeros((h, w), dtype=np.uint8)
+                cv2.drawContours(mask, contours, i, 255,
+                                 thickness=cv2.cv.CV_FILLED,
+                                 offset=(-x, -y))
+                mask_filled = np.count_nonzero(mask)
+
+                orig_slice = cv2.bitwise_not(original[y:y + h, x:x + w])
+                orig_filled = np.count_nonzero(mask & orig_slice)
+
+                filled_ratio = orig_filled / float(mask_filled)
+                if filled_ratio > 0.1:
+                    good_contours.append(c)
             else:
                 bad_contours.append(c)
             i = hierarchy[i][0]
@@ -317,12 +327,12 @@ def skew_angle(im):
     grad = gradient(first_pass)
     space_width = (im_h / 50) | 1
     line_height = (im_h / 400) | 1
-    horiz = cv2.getStructuringElement(cv2.MORPH_ELLIPSE,
+    horiz = cv2.getStructuringElement(cv2.MORPH_RECT,
                                       (space_width, line_height))
     grad = cv2.morphologyEx(grad, cv2.MORPH_CLOSE, horiz)
 
     lines = cv2.cvtColor(grad, cv2.COLOR_GRAY2RGB)
-    line_contours, _ = text_contours(grad)
+    line_contours, _ = text_contours(grad, first_pass)
     alphas = []
     for c in line_contours:
         x, y, w, h = cv2.boundingRect(c)

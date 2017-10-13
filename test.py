@@ -109,6 +109,8 @@ for i, (title, im) in enumerate(images):
     plt.subplot(2, (len(images) + 1) / 2, i + 1)
     im = zoom(im, 0.1)
     if im.dtype == np.uint8:
+            import IPython
+            IPython.embed()
         plt.imshow(im, 'gray')
     else:
         plt.imshow(im)

@@ -4,13 +4,7 @@ import os
 import re
 from multiprocessing.pool import Pool
 
-from lib import gradient, vert_close, text_contours, binarize, roth, \
-    skew_angle, safe_rotate
-
-indir = sys.argv[1]
-outdir = sys.argv[2]
-
-files = filter(lambda f: re.search('.(png|jpg|tif)$', f), os.listdir(indir))
+from lib import gradient, text_contours, binarize, roth, skew_angle, safe_rotate
 
 def split_contours(contours):
     # Maximize horizontal separation
@@ -51,22 +45,25 @@ def crop_to_contours(im, contour_set):
     crop_x1 = int(min(im_w, crop_x1 + .01 * im_h))
     crop_y1 = int(min(im_h, crop_y1 + .01 * im_h))
 
-    return im[crop_y0:crop_y1, crop_x0:crop_x1]
+    return ((crop_x0, crop_y0), (crop_x1, crop_y1))
 
-def crop(im):
+def crop(im, bw, split=True):
     im_w, im_h = len(im[0]), len(im)
 
-    grad = gradient(im)
-    # closed = vert_close(grad)
+    grad = gradient(bw)
     cv2.imwrite("grad.png", grad)
     space_width = (im_h / 50) | 1
     line_height = (im_h / 100) | 1
-    ellipse = cv2.getStructuringElement(cv2.MORPH_ELLIPSE,
-                                        (space_width, line_height))
-    closed = cv2.morphologyEx(grad, cv2.MORPH_CLOSE, ellipse)
+    box = cv2.getStructuringElement(cv2.MORPH_RECT, (space_width, line_height))
+    closed = cv2.morphologyEx(grad, cv2.MORPH_CLOSE, box)
     cv2.imwrite("closed.png", closed)
 
-    good_contours, bad_contours = text_contours(closed)
+    open_size = (im_h / 800) | 1
+    cross = cv2.getStructuringElement(cv2.MORPH_CROSS, (open_size, open_size))
+    opened = cv2.morphologyEx(closed, cv2.MORPH_OPEN, cross)
+    cv2.imwrite("opened.png", opened)
+
+    good_contours, bad_contours = text_contours(opened, bw)
 
     debug = cv2.cvtColor(im, cv2.COLOR_GRAY2RGB)
     for c in good_contours:
@@ -76,7 +73,7 @@ def crop(im):
         x, y, w, h = cv2.boundingRect(c)
         cv2.rectangle(debug, (x, y), (x + w, y + h), (0, 0, 255), 4)
 
-    if im_w > im_h:  # two pages
+    if split and im_w > im_h:  # two pages
         cv2.imwrite("debug.png", debug)
         contour_sets = split_contours(good_contours)
     else:
@@ -84,27 +81,45 @@ def crop(im):
 
     return [crop_to_contours(im, cs) for cs in contour_sets]
 
-def go(fn):
-    print fn
-    inpath = os.path.join(indir, fn)
-    outpath = os.path.join(outdir, fn)
-    if os.path.isfile(outpath):
-        print'skipping', outpath
-        return
+def go(inpath, outpath):
+    print inpath
     original = cv2.imread(inpath, cv2.CV_LOAD_IMAGE_UNCHANGED)
     im_h, im_w = original.shape
     bw = binarize(original, algorithm=roth, resize=1.0)
     cv2.imwrite('thresholded.png', bw)
-    out = crop(bw)
-    for idx, outimg in enumerate(out):
-        if len(outimg) > 0:
-            angle = skew_angle(outimg)
-            outimg = safe_rotate(outimg, angle)
-            outimg = crop(outimg)[0]
+    crops = crop(original, bw)
+    for idx, c in enumerate(crops):
+        (x0, y0), (x1, y1) = c
+        if x1 > x0 and y1 > y0:
+            bw_cropped = bw[y0:y1, x0:x1]
+            orig_cropped = original[y0:y1, x0:x1]
+            angle = skew_angle(bw_cropped)
+            rotated = safe_rotate(orig_cropped, angle)
+            rotated_bw = binarize(rotated, algorithm=roth, resize=1.0)
+            new_crop = crop(rotated, rotated_bw, split=False)[0]
+            (x0r, y0r), (x1r, y1r) = new_crop
+            outimg = rotated_bw[y0r:y1r, x0r:x1r]
             cv2.imwrite('{}_{}{}'.format(outpath[:-4], idx, '.tif'), outimg)
 
-for fn in files:
-    go(fn)
+concurrent = False
 
-# pool = Pool(4)
-# pool.map(go, files)
+if __name__ == '__main__':
+    indir = sys.argv[1]
+    outdir = sys.argv[2]
+
+    files = filter(lambda f: re.search('.(png|jpg|tif)$', f),
+                   os.listdir(indir))
+    files.sort()
+    infiles = [os.path.join(indir, f) for f in files]
+    outfiles = [os.path.join(outdir, f) for f in files]
+
+    im = cv2.imread(infiles[0], cv2.CV_LOAD_IMAGE_UNCHANGED)
+    im_h, im_w = im.shape
+    # image height should be about 10 inches. round to 100
+    dpi = int(round(im_h / 1000.0) * 100)
+
+    if concurrent:
+        pool = Pool(2)
+        pool.map(go, files)
+    else:
+        map(go, infiles, outfiles)
