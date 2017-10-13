@@ -2,7 +2,9 @@ import cv2
 import sys
 import os
 import re
+import glob
 from multiprocessing.pool import Pool
+from subprocess import check_call
 
 from lib import gradient, text_contours, binarize, roth, skew_angle, safe_rotate
 
@@ -81,13 +83,23 @@ def crop(im, bw, split=True):
 
     return [crop_to_contours(im, cs) for cs in contour_sets]
 
-def go(inpath, outpath):
-    print inpath
+extension = '.tif'
+def go(fn, indir, outdir):
+    inpath = os.path.join(indir, fn)
+    outfiles = glob.glob('{}/{}_*{}'.format(outdir, fn[:-4], extension))
+    if outfiles:
+        print 'skipping', inpath
+        return outfiles
+    else:
+        print 'processing', inpath
+
     original = cv2.imread(inpath, cv2.CV_LOAD_IMAGE_UNCHANGED)
     im_h, im_w = original.shape
     bw = binarize(original, algorithm=roth, resize=1.0)
     cv2.imwrite('thresholded.png', bw)
     crops = crop(original, bw)
+
+    outfiles = []
     for idx, c in enumerate(crops):
         (x0, y0), (x1, y1) = c
         if x1 > x0 and y1 > y0:
@@ -95,11 +107,19 @@ def go(inpath, outpath):
             orig_cropped = original[y0:y1, x0:x1]
             angle = skew_angle(bw_cropped)
             rotated = safe_rotate(orig_cropped, angle)
+
             rotated_bw = binarize(rotated, algorithm=roth, resize=1.0)
             new_crop = crop(rotated, rotated_bw, split=False)[0]
             (x0r, y0r), (x1r, y1r) = new_crop
+
             outimg = rotated_bw[y0r:y1r, x0r:x1r]
-            cv2.imwrite('{}_{}{}'.format(outpath[:-4], idx, '.tif'), outimg)
+            outfile = '{}/{}_{}{}'.format(outdir, fn[:-4], idx, extension)
+            cv2.imwrite(outfile, outimg)
+            check_call(['tiffset', '-s', '282', str(dpi), outfile])
+            check_call(['tiffset', '-s', '283', str(dpi), outfile])
+            outfiles.append(outfile)
+
+    return outfiles
 
 concurrent = False
 
@@ -109,17 +129,30 @@ if __name__ == '__main__':
 
     files = filter(lambda f: re.search('.(png|jpg|tif)$', f),
                    os.listdir(indir))
-    files.sort()
-    infiles = [os.path.join(indir, f) for f in files]
-    outfiles = [os.path.join(outdir, f) for f in files]
+    files.sort(key=lambda f: int(re.search('([0-9]+)', f).group(1)))
 
-    im = cv2.imread(infiles[0], cv2.CV_LOAD_IMAGE_UNCHANGED)
+    im = cv2.imread(os.path.join(indir, files[0]), cv2.CV_LOAD_IMAGE_UNCHANGED)
     im_h, im_w = im.shape
     # image height should be about 10 inches. round to 100
     dpi = int(round(im_h / 1000.0) * 100)
+    print 'detected dpi:', dpi
 
     if concurrent:
         pool = Pool(2)
-        pool.map(go, files)
+        outfiles = pool.map(go, files)
     else:
-        map(go, infiles, outfiles)
+        outfiles = map(go, files, [indir] * len(files), [outdir] * len(files))
+    outfiles = sum(outfiles, [])
+
+    outtif = os.path.join(outdir, 'out.tif')
+    outpdf = os.path.join(outdir, 'out.pdf')
+    if not os.path.isfile(outpdf):
+        if not os.path.isfile(outtif):
+            print 'making tif:', outtif
+            check_call(['tiffcp'] + outfiles + [outtif])
+
+        print 'making pdf:', outpdf
+        check_call([
+            'tiff2pdf', '-q', '100', '-j', '-p', 'letter',
+            '-o', outpdf, outtif
+        ])
