@@ -4,7 +4,8 @@ import sys
 import numpy as np
 import matplotlib.pyplot as plt
 
-from lib import text_contours, sauvola, niblack, otsu, kittler, roth, kamel, yan, lu2010, adaptive_otsu, ntirogiannis2014
+import binarize
+from lib import text_contours
 
 inpath = sys.argv[1]
 original = cv2.imread(inpath, cv2.CV_LOAD_IMAGE_GRAYSCALE)
@@ -44,8 +45,6 @@ def crop(im):
     return result[crop_y0:crop_y1, crop_x0:crop_x1]
 
 clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(5, 5))
-cross33 = cv2.getStructuringElement(cv2.MORPH_CROSS, (3, 3))
-cross55 = cv2.getStructuringElement(cv2.MORPH_CROSS, (5, 5))
 
 transforms = [
     # ('Bilateral', lambda im: cv2.bilateralFilter(im, 5, 75, 41)),
@@ -64,12 +63,12 @@ transforms = [
 options = [
     # ('Sauvola-1.0/Clahe', lambda im: sauvola(clahe.apply(im), thresh_factor=1.0)),
     # ('Sauvola-1.0', sauvola),
-    ('Ntiro2014', ntirogiannis2014),
-    ('Roth', roth),
-    ('AOtsu', adaptive_otsu),
+    ('Ntiro2014', binarize.ntirogiannis2014),
+    ('Roth', binarize.roth),
+    ('AOtsu', binarize.adaptive_otsu),
     # ('Kamel/Zhao', kamel),
     # ('Lu2010', lu2010),
-    ('Yan-0.3', lambda im: yan(im, alpha=0.3)),
+    ('Yan-0.3', lambda im: binarize.yan(im, alpha=0.3)),
     # ('Yan-0.65', lambda im: yan(im, alpha=0.65)),
 ]
 

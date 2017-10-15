@@ -6,8 +6,8 @@ import glob
 from multiprocessing.pool import Pool
 from subprocess import check_call
 
-from lib import gradient, text_contours, binarize, adaptive_otsu, skew_angle, \
-    safe_rotate
+from lib import gradient, text_contours, binarize, skew_angle, safe_rotate
+from binarize import adaptive_otsu
 
 def split_contours(contours):
     # Maximize horizontal separation
