@@ -1,9 +1,10 @@
+import argparse
 import cv2
-import sys
+import glob
 import os
 import re
-import glob
 from multiprocessing.pool import Pool
+from os.path import join, basename, dirname, isfile
 from subprocess import check_call
 
 from lib import gradient, text_contours, binarize, skew_angle, safe_rotate
@@ -85,8 +86,8 @@ def crop(im, bw, split=True):
     return [crop_to_contours(im, cs) for cs in contour_sets]
 
 extension = '.tif'
-def go(fn, indir, outdir):
-    inpath = os.path.join(indir, fn)
+def process_image(fn, indir, outdir, dpi):
+    inpath = join(indir, fn)
     outfiles = glob.glob('{}/{}_*{}'.format(outdir, fn[:-4], extension))
     if outfiles:
         print 'skipping', inpath
@@ -115,6 +116,7 @@ def go(fn, indir, outdir):
 
             outimg = rotated_bw[y0r:y1r, x0r:x1r]
             outfile = '{}/{}_{}{}'.format(outdir, fn[:-4], idx, extension)
+            print '    writing', outfile
             cv2.imwrite(outfile, outimg)
             check_call(['tiffset', '-s', '282', str(dpi), outfile])
             check_call(['tiffset', '-s', '283', str(dpi), outfile])
@@ -122,34 +124,40 @@ def go(fn, indir, outdir):
 
     return outfiles
 
-concurrent = False
-
-if __name__ == '__main__':
-    indir = sys.argv[1]
-    outdir = sys.argv[2]
+def run(args):
+    if args.single_file:
+        process_image(basename(args.single_file), dirname(args.single_file), '.')
+        return
 
     files = filter(lambda f: re.search('.(png|jpg|tif)$', f),
-                   os.listdir(indir))
+                   os.listdir(args.indir))
     files.sort(key=lambda f: map(int, re.findall('[0-9]+', f)))
 
-    im = cv2.imread(os.path.join(indir, files[0]), cv2.CV_LOAD_IMAGE_UNCHANGED)
+    im = cv2.imread(join(args.indir, files[0]), cv2.CV_LOAD_IMAGE_UNCHANGED)
     im_h, im_w = im.shape
     # image height should be about 10 inches. round to 100
     dpi = int(round(im_h / 1000.0) * 100)
     print 'detected dpi:', dpi
 
-    if concurrent:
+    if args.concurrent:
         pool = Pool(2)
-        outfiles = pool.map(go, files)
+        outfiles = pool.map(process_image, files
+                            [args.indir] * len(files),
+                            [args.outdir] * len(files),
+                            [dpi] * len(files))
     else:
-        outfiles = map(go, files, [indir] * len(files), [outdir] * len(files))
+        outfiles = map(process_image, files,
+                       [args.indir] * len(files),
+                       [args.outdir] * len(files),
+                       [dpi] * len(files))
+
     outfiles = sum(outfiles, [])
     outfiles.sort(key=lambda f: map(int, re.findall('[0-9]+', f)))
 
-    outtif = os.path.join(outdir, 'out.tif')
-    outpdf = os.path.join(outdir, 'out.pdf')
-    if not os.path.isfile(outpdf):
-        if not os.path.isfile(outtif):
+    outtif = join(args.outdir, 'out.tif')
+    outpdf = join(args.outdir, 'out.pdf')
+    if not isfile(outpdf):
+        if not isfile(outtif):
             print 'making tif:', outtif
             check_call(['tiffcp'] + outfiles + [outtif])
 
@@ -158,3 +166,16 @@ if __name__ == '__main__':
             'tiff2pdf', '-q', '100', '-j', '-p', 'letter',
             '-o', outpdf, outtif
         ])
+
+
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser(description='Batch-process for PDF')
+    parser.add_argument('indir', required=False, help="Input directory")
+    parser.add_argument('outdir', required=False, help="Output directory")
+    parser.add_argument('-f', '--file', type=bool, action='store_true',
+                        dest='single_file',
+                        help="Run on single file instead")
+    parser.add_argument('-c', '--concurrent', type=bool,
+                        help="Run w/ threads.")
+
+    run(parser.parse_args())
