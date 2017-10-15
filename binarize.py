@@ -243,3 +243,19 @@ def adaptive_otsu(im):
     normalized = clip_u8(C / bg_float * im)
     debug_imwrite('norm.png', normalized)
     return otsu(normalized)
+
+def binarize(im, algorithm=adaptive_otsu, resize=1.0):
+    # clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(5, 5))
+    if (im + 1 < 2).all():  # black and white
+        return im
+    else:
+        if resize < 0.99 or resize > 1.01:
+            im = cv2.resize(im, (0, 0), None, resize, resize)
+        if len(im.shape) > 2:
+            sat, lum = hsl_gray(im)
+            # sat, lum = clahe.apply(sat), clahe.apply(lum)
+            return algorithm(lum)  # & yan(l, T=35)
+        else:
+            # img = clahe.apply(img)
+            # cv2.imwrite('clahe.png', img)
+            return algorithm(im)

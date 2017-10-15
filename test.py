@@ -5,7 +5,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 import binarize
-from lib import text_contours
+from algorithm import text_contours, dewarp
 
 inpath = sys.argv[1]
 original = cv2.imread(inpath, cv2.CV_LOAD_IMAGE_GRAYSCALE)
@@ -58,26 +58,19 @@ transforms = [
     # ('Vertical Close', vert_close),
     # ('Outline', outline),
     # ('Crop', crop),
+    ('AOtsu', binarize.adaptive_otsu),
+    ('Dewarp', dewarp),
 ]
 
 options = [
     # ('Sauvola-1.0/Clahe', lambda im: sauvola(clahe.apply(im), thresh_factor=1.0)),
     # ('Sauvola-1.0', sauvola),
-    ('Ntiro2014', binarize.ntirogiannis2014),
-    ('Roth', binarize.roth),
-    ('AOtsu', binarize.adaptive_otsu),
+    # ('Ntiro2014', binarize.ntirogiannis2014),
+    # ('Roth', binarize.roth),
     # ('Kamel/Zhao', kamel),
     # ('Lu2010', lu2010),
-    ('Yan-0.3', lambda im: binarize.yan(im, alpha=0.3)),
+    # ('Yan-0.3', lambda im: binarize.yan(im, alpha=0.3)),
     # ('Yan-0.65', lambda im: yan(im, alpha=0.65)),
-]
-
-transforms2 = [
-    # ('Scale', lambda im: cv2.resize(im, (0, 0), None, 0.25, 0.25, cv2)),
-    # ('Open', morph_open),
-    # ('Gradient', gradient),
-    # ('Outline', outline),
-    # ('Crop', crop),
 ]
 
 def zoom(im, frac):

@@ -7,7 +7,7 @@ from multiprocessing.pool import Pool
 from os.path import join, basename, dirname, isfile
 from subprocess import check_call
 
-from lib import gradient, text_contours, binarize, skew_angle, safe_rotate
+from algorithm import gradient, text_contours, binarize, skew_angle, safe_rotate
 from binarize import adaptive_otsu
 
 def split_contours(contours):
@@ -95,9 +95,9 @@ def process_image(fn, indir, outdir, dpi):
     else:
         print 'processing', inpath
 
-    original = cv2.imread(inpath, cv2.CV_LOAD_IMAGE_UNCHANGED)
+    original = cv2.imread(inpath, cv2.IMREAD_UNCHANGED)
     im_h, im_w = original.shape
-    bw = binarize(original, algorithm=adaptive_otsu, resize=1.0)
+    bw = binarize(original, adaptive_otsu, resize=1.0)
     cv2.imwrite('thresholded.png', bw)
     crops = crop(original, bw)
 
@@ -110,7 +110,7 @@ def process_image(fn, indir, outdir, dpi):
             angle = skew_angle(bw_cropped)
             rotated = safe_rotate(orig_cropped, angle)
 
-            rotated_bw = binarize(rotated, algorithm=adaptive_otsu, resize=1.0)
+            rotated_bw = binarize(rotated, adaptive_otsu, resize=1.0)
             new_crop = crop(rotated, rotated_bw, split=False)[0]
             (x0r, y0r), (x1r, y1r) = new_crop
 
@@ -126,18 +126,21 @@ def process_image(fn, indir, outdir, dpi):
 
 def run(args):
     if args.single_file:
-        process_image(basename(args.single_file), dirname(args.single_file), '.')
-        return
+        im = cv2.imread(args.single_file, cv2.IMREAD_UNCHANGED)
+    else:
+        files = filter(lambda f: re.search('.(png|jpg|tif)$', f),
+                    os.listdir(args.indir))
+        files.sort(key=lambda f: map(int, re.findall('[0-9]+', f)))
+        im = cv2.imread(join(args.indir, files[0]), cv2.IMREAD_UNCHANGED)
 
-    files = filter(lambda f: re.search('.(png|jpg|tif)$', f),
-                   os.listdir(args.indir))
-    files.sort(key=lambda f: map(int, re.findall('[0-9]+', f)))
-
-    im = cv2.imread(join(args.indir, files[0]), cv2.CV_LOAD_IMAGE_UNCHANGED)
     im_h, im_w = im.shape
     # image height should be about 10 inches. round to 100
     dpi = int(round(im_h / 1000.0) * 100)
     print 'detected dpi:', dpi
+
+    if args.single_file:
+        process_image(basename(args.single_file), dirname(args.single_file), '.', dpi)
+        return
 
     if args.concurrent:
         pool = Pool(2)
@@ -170,12 +173,11 @@ def run(args):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Batch-process for PDF')
-    parser.add_argument('indir', required=False, help="Input directory")
-    parser.add_argument('outdir', required=False, help="Output directory")
-    parser.add_argument('-f', '--file', type=bool, action='store_true',
-                        dest='single_file',
+    parser.add_argument('indir', nargs='?', help="Input directory")
+    parser.add_argument('outdir', nargs='?', help="Output directory")
+    parser.add_argument('-f', '--file', dest='single_file', action='store',
                         help="Run on single file instead")
-    parser.add_argument('-c', '--concurrent', type=bool,
+    parser.add_argument('-c', '--concurrent', action='store_true',
                         help="Run w/ threads.")
 
     run(parser.parse_args())
