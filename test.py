@@ -4,7 +4,7 @@ import sys
 import numpy as np
 import matplotlib.pyplot as plt
 
-from lib import text_contours, sauvola, niblack, otsu, kittler, roth, kamel, yan, lu2010
+from lib import text_contours, sauvola, niblack, otsu, kittler, roth, kamel, yan, lu2010, adaptive_otsu, ntirogiannis2014
 
 inpath = sys.argv[1]
 original = cv2.imread(inpath, cv2.CV_LOAD_IMAGE_GRAYSCALE)
@@ -64,12 +64,13 @@ transforms = [
 options = [
     # ('Sauvola-1.0/Clahe', lambda im: sauvola(clahe.apply(im), thresh_factor=1.0)),
     # ('Sauvola-1.0', sauvola),
+    ('Ntiro2014', ntirogiannis2014),
     ('Roth', roth),
-    ('Otsu', lambda im: otsu(clahe.apply(im))),
+    ('AOtsu', adaptive_otsu),
     # ('Kamel/Zhao', kamel),
-    ('Lu2010', lu2010),
+    # ('Lu2010', lu2010),
     ('Yan-0.3', lambda im: yan(im, alpha=0.3)),
-    ('Yan-0.65', lambda im: yan(im, alpha=0.65)),
+    # ('Yan-0.65', lambda im: yan(im, alpha=0.65)),
 ]
 
 transforms2 = [
@@ -109,8 +110,6 @@ for i, (title, im) in enumerate(images):
     plt.subplot(2, (len(images) + 1) / 2, i + 1)
     im = zoom(im, 0.1)
     if im.dtype == np.uint8:
-            import IPython
-            IPython.embed()
         plt.imshow(im, 'gray')
     else:
         plt.imshow(im)

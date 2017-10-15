@@ -26,19 +26,14 @@ cross33 = cv2.getStructuringElement(cv2.MORPH_CROSS, (3, 3))
 def gradient(im):
     return cv2.morphologyEx(im, cv2.MORPH_GRADIENT, cross33)
 
-def vert_close(im):
-    space_width = len(im) / 200 * 2 + 1
-    vert = cv2.getStructuringElement(cv2.MORPH_RECT, (1, space_width))
-    return cv2.morphologyEx(im, cv2.MORPH_CLOSE, vert)
-
 def sauvola(im, window_factor=200, k=0.2, thresh_factor=1.0):
     thresh = threshold_sauvola(im, window_size=len(im) / window_factor * 2 + 1)
     booleans = im > (thresh * thresh_factor)
     ints = booleans.astype(np.uint8) * 255
     return ints
 
-def niblack(im):
-    thresh = threshold_niblack(im, window_size=len(im) / 200 * 2 + 1)
+def niblack(im, window_size=61, k=0.2):
+    thresh = threshold_niblack(im, window_size=window_size, k=k)
     booleans = im > (thresh * 1.0)
     ints = booleans.astype(np.uint8) * 255
     return ints
@@ -230,6 +225,18 @@ def lu2010(im):
     debug_imwrite('lu2010.png', out)
     return out
 
+def adaptive_otsu(im):
+    im_h, _ = im.shape
+    s = (im_h / 300) | 1
+    ellipse = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (s, s))
+    background = cv2.morphologyEx(im, cv2.MORPH_DILATE, ellipse)
+    bg_float = background.astype(np.float64)
+    debug_imwrite('bg.png', background)
+    C = np.percentile(im, 30)
+    normalized = clip_u8(C / bg_float * im)
+    debug_imwrite('norm.png', normalized)
+    return otsu(normalized)
+
 def otsu(im):
     _, thresh = cv2.threshold(im, 0, 255, cv2.THRESH_BINARY | cv2.THRESH_OTSU)
     debug_imwrite('otsu.png', thresh)
@@ -369,3 +376,24 @@ def safe_rotate(im, angle):
                             borderValue=255)
     debug_imwrite('rotated.png', result)
     return result
+
+def ntirogiannis2014(im):
+    # TODO: real inpainting alg
+    im_h, _ = im.shape
+    M = niblack(im, window_size=61, k=0.2)
+    M_eroded = cv2.morphologyEx(M, cv2.MORPH_ERODE, cross33)
+
+    s = (im_h / 600) | 1
+    ellipse = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (s, s))
+    background = cv2.morphologyEx(im, cv2.MORPH_DILATE, ellipse)
+
+    inpainted = (M_eroded & im) | (~M_eroded & background)
+    cv2.imwrite('inpainted.png', inpainted)
+
+    im_f = im.astype(float) + 1
+    inpainted_f = inpainted.astype(float) + 1
+    F = im_f / inpainted_f
+    F_min, F_max = F.min(), F.max()
+    N = clip_u8(255 / (F_max - F_min) * (F - F_min))
+    debug_imwrite('N.png', N)
+    return otsu(im)

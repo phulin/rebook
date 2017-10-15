@@ -6,7 +6,8 @@ import glob
 from multiprocessing.pool import Pool
 from subprocess import check_call
 
-from lib import gradient, text_contours, binarize, roth, skew_angle, safe_rotate
+from lib import gradient, text_contours, binarize, adaptive_otsu, skew_angle, \
+    safe_rotate
 
 def split_contours(contours):
     # Maximize horizontal separation
@@ -95,7 +96,7 @@ def go(fn, indir, outdir):
 
     original = cv2.imread(inpath, cv2.CV_LOAD_IMAGE_UNCHANGED)
     im_h, im_w = original.shape
-    bw = binarize(original, algorithm=roth, resize=1.0)
+    bw = binarize(original, algorithm=adaptive_otsu, resize=1.0)
     cv2.imwrite('thresholded.png', bw)
     crops = crop(original, bw)
 
@@ -108,7 +109,7 @@ def go(fn, indir, outdir):
             angle = skew_angle(bw_cropped)
             rotated = safe_rotate(orig_cropped, angle)
 
-            rotated_bw = binarize(rotated, algorithm=roth, resize=1.0)
+            rotated_bw = binarize(rotated, algorithm=adaptive_otsu, resize=1.0)
             new_crop = crop(rotated, rotated_bw, split=False)[0]
             (x0r, y0r), (x1r, y1r) = new_crop
 
@@ -129,7 +130,7 @@ if __name__ == '__main__':
 
     files = filter(lambda f: re.search('.(png|jpg|tif)$', f),
                    os.listdir(indir))
-    files.sort(key=lambda f: int(re.search('([0-9]+)', f).group(1)))
+    files.sort(key=lambda f: map(int, re.findall('[0-9]+', f)))
 
     im = cv2.imread(os.path.join(indir, files[0]), cv2.CV_LOAD_IMAGE_UNCHANGED)
     im_h, im_w = im.shape
@@ -143,6 +144,7 @@ if __name__ == '__main__':
     else:
         outfiles = map(go, files, [indir] * len(files), [outdir] * len(files))
     outfiles = sum(outfiles, [])
+    outfiles.sort(key=lambda f: map(int, re.findall('[0-9]+', f)))
 
     outtif = os.path.join(outdir, 'out.tif')
     outpdf = os.path.join(outdir, 'out.pdf')
