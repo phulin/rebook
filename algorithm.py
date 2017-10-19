@@ -85,19 +85,26 @@ def text_contours(im, original):
 
 def _line_contours(im):
     im_h, _ = im.shape
+    bw = ~binarize(im)
+    debug_imwrite('bw.png', bw)
 
-    first_pass = binarize(im, resize=1000.0 / im_h)
+    space_width = (im_h / 70) | 1
+    # line_height = (im_h / 300) | 1
 
-    grad = gradient(first_pass)
-    space_width = (im_h / 50) | 1
-    line_height = (im_h / 400) | 1
-    horiz = cv2.getStructuringElement(cv2.MORPH_RECT,
-                                      (space_width, line_height))
-    grad = cv2.morphologyEx(grad, cv2.MORPH_CLOSE, horiz)
+    # struct = np.zeros((line_height, space_width), dtype=np.uint8)
+    # cv2.line(struct, (0, 0), (space_width - 1, line_height - 1), 1)
+    # cv2.line(struct, (space_width - 1, 0), (0, line_height - 1), 1)
+    # bw1 = cv2.morphologyEx(bw, cv2.MORPH_CLOSE, struct)
 
-    line_contours, _ = text_contours(grad, first_pass)
+    # circle = cv2.getStructuringElement(cv2.MORPH_ELLIPSE,
+    #                                    (line_height, line_height))
+    # bw2 = cv2.morphologyEx(bw1, cv2.MORPH_CLOSE, circle)
+    horiz = cv2.getStructuringElement(cv2.MORPH_RECT, (space_width, 1))
+    bw2 = cv2.morphologyEx(bw, cv2.MORPH_CLOSE, horiz)
 
-    return first_pass, line_contours
+    line_contours, _ = text_contours(bw2, im)
+
+    return bw, line_contours
 
 def skew_angle(im):
     small_bw, line_contours = _line_contours(im)
@@ -117,8 +124,103 @@ def skew_angle(im):
     debug_imwrite('lines.png', lines)
     return np.median(alphas)
 
+def lu_dewarp(im):
+    # morphological operators
+    morph_a = [
+        np.array([1] + [0] * (2 * i), dtype=np.uint8).reshape(2 * i + 1, 1) \
+        for i in range(9)
+    ]
+    morph_d = [a.T for a in morph_a]
+    morph_c = [
+        np.array([0] * (2 * i) + [1], dtype=np.uint8).reshape(2 * i + 1, 1) \
+        for i in range(9)
+    ]
+    # morph_b = [c.T for c in morph_c]
+
+    im_inv = im ^ 255
+    bdyt = np.zeros(im.shape, dtype=np.uint8) - 1
+    for struct in morph_c + morph_d:  # ++ morph_b
+        bdyt &= cv2.erode(im_inv, struct)
+
+    debug_imwrite("bdyt.png", bdyt)
+    return bdyt
+
+    for struct in morph_c + morph_d:
+        bdyt &= im_inv ^ cv2.erode(im_inv, struct)
+
+def top_contours(contours, hierarchy):
+    i = 0
+    result = []
+    while i >= 0:
+        result.append(contours[i])
+        i = hierarchy[i][0]
+
+    return result
+
+def dominant_char_height(im):
+    _, contours, [hierarchy] = cv2.findContours(im, cv2.RETR_CCOMP,
+                                                cv2.CHAIN_APPROX_SIMPLE)
+
+    char_heights = [
+        cv2.boundingRect(c)[3] for c in top_contours(contours, hierarchy)
+    ]
+
+    hist, _ = np.histogram(char_heights, 256, [0, 256])
+    print hist
+    return np.argmax(hist)
+
 def dewarp_text(im):
-    small_bw, contours = _line_contours(im)
+    # Goal-Oriented Rectification
+
+    AH = dominant_char_height(im)
+    print 'AH =', AH
+
+    horiz = cv2.getStructuringElement(cv2.MORPH_RECT, (int(AH * 0.6) | 1, 1))
+    rls = cv2.morphologyEx(im ^ 255, cv2.MORPH_CLOSE, horiz)
+    debug_imwrite('rls.png', rls)
+
+    _, contours, [hierarchy] = cv2.findContours(rls, cv2.RETR_CCOMP,
+                                                cv2.CHAIN_APPROX_SIMPLE)
+    words = top_contours(contours, hierarchy)
+    word_boxes = [tuple([word] + list(cv2.boundingRect(word))) for word in words]
+    word_boxes = filter(
+        lambda (_, x, y, w, h): h < 4 * AH and h > AH / 3 and w > AH / 3,
+        word_boxes
+    )
+    word_boxes.sort(key=lambda (word, x, y, w, h): x)
+
+    lines = []
+    for word_box in word_boxes:
+        _, x1, y1, w1, h1 = word_box
+        # print "word:", x1, y1, w1, h1
+        candidates = []
+        for l in lines:
+            _, x2, y2, w2, h2 = l[-1]
+            if x2 < x1 and x1 < x2 + w2 + 6 * AH and y2 <= y1 + h1 and y1 <= y2 + h2:
+                # print "  candidate:", x2, y2, w2, h2
+                candidates.append((x1 - x2 - w2, l))
+
+        if candidates:
+            candidates.sort()
+            _, line = candidates[-1]
+            _, x, y, w, h = line[-1]
+            line.append(word_box)
+            # print "  selected:", x, y, w, h
+        else:
+            lines.append([word_box])
+
+    debug = cv2.cvtColor(im, cv2.COLOR_GRAY2BGR)
+    for _, x, y, w, h in word_boxes:
+        cv2.rectangle(debug, (x, y), (x + w, y + h), (0, 255, 0), 1)
+    for l in lines:
+        min_x1 = min((x for _, x, y, w, h in l))
+        max_x2 = max((x + w for _, x, y, w, h in l))
+        min_y1 = min((y for _, x, y, w, h in l))
+        max_y2 = max((y + h for _, x, y, w, h in l))
+        cv2.rectangle(debug, (min_x1, min_y1), (max_x2, max_y2), (255, 0, 0), 2)
+    debug_imwrite('debug.png', debug)
+
+    return im
 
 def safe_rotate(im, angle):
     debug_imwrite('prerotated.png', im)
