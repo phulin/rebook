@@ -75,6 +75,9 @@ class Crop(object):
     def __repr__(self):
         return "Crop({}, {}, {}, {})".format(self.x0, self.y0, self.x1, self.y1)
 
+def draw_crop(im, crop, color, thickness=2):
+    cv2.rectangle(im, (crop.x0, crop.y0), (crop.x1, crop.y1), color, thickness)
+
 def split_crops(crops):
     # Maximize horizontal separation
     # sorted by starting x value, ascending).
@@ -119,7 +122,9 @@ def crop(im, bw, split=True):
     print 'overall: mean:', strokes_mean, 'std:', strokes_std
 
     debug = cv2.cvtColor(im, cv2.COLOR_GRAY2RGB)
+    line_crop_debug = cv2.cvtColor(im, cv2.COLOR_GRAY2RGB)
     line_crops = []
+    good_contours = []
     for line in lines:
         line_crop = Crop.null(bw)
         for c, x, y, w, h in line:
@@ -132,7 +137,6 @@ def crop(im, bw, split=True):
                                                 crop.apply(stroke_widths))
             # print 'mean:', masked_strokes.mean(), 'std:', masked_strokes.std()
             mean = masked_strokes.mean()
-            std = masked_strokes.std()
             if mean < strokes_mean - strokes_std:
                 print 'skipping', x, y
                 print '  mean:', masked_strokes.mean(), 'std:', masked_strokes.std()
@@ -140,10 +144,33 @@ def crop(im, bw, split=True):
             else:
                 draw_box(debug, c, (0, 255, 0), 2)
                 line_crop = line_crop.union(crop)
+                good_contours.append(c)
 
         line_crops.append(line_crop)
+        draw_crop(line_crop_debug, line_crop, (0, 255, 0))
 
+    debug_imwrite("line_debug.png", line_crop_debug)
     debug_imwrite("debug.png", debug)
+
+    mask = np.zeros(im.shape, dtype=np.uint8)
+    cv2.drawContours(mask, good_contours, -1, 255, thickness=cv2.FILLED)
+    rect = cv2.getStructuringElement(cv2.MORPH_RECT, (1, AH * 8))
+    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, rect)
+    _, contours, [hierarchy] = \
+        cv2.findContours(mask, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
+    big_contours = algorithm.top_contours(contours, hierarchy)
+    debug_imwrite("big_contours.png", mask)
+    good_big_contours = np.zeros(im.shape, dtype=np.uint8)
+    for c in big_contours:
+        x, y, w, h = cv2.boundingRect(c)
+        mask = np.zeros((h, w), dtype=np.uint8)
+        cv2.drawContours(mask, [c], 0, 255,
+                         thickness=cv2.FILLED, offset=(-x, -y))
+        if w > (im_w / 6 if split else im_w / 3):
+            good_big_contours[y:y + h, x:x + w] = mask
+
+    line_crops = filter(lambda lc: lc.nonempty() and not np.all(lc.apply(good_big_contours) == 0),
+                        line_crops)
 
     if split and im_w > im_h:  # two pages
         crop_sets = split_crops(line_crops)
@@ -222,10 +249,10 @@ def run(args):
 
     if args.concurrent:
         pool = Pool(2)
-        outfiles = pool.map(process_image, zip(files,
+        outfiles = pool.map(process_file, zip(files,
                             [args.outdir] * len(files)))
     else:
-        outfiles = map(process_image, zip(files,
+        outfiles = map(process_file, zip(files,
                        [args.outdir] * len(files)))
 
     outfiles = sum(outfiles, [])

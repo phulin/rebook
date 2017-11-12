@@ -196,30 +196,42 @@ def word_contours(AH, im):
 
     return word_boxes
 
+def valid_letter(AH, c, x, y, w, h):
+    if h < 3 * AH and w < 3 * AH and h > AH / 2 and w > AH / 3:
+        return True
+    else:
+        # catch horiz lines
+        mask = np.zeros((h, w), dtype=np.uint8)
+        cv2.drawContours(mask, [c], 0, 1,
+                         thickness=cv2.FILLED, offset=(-x, -y))
+        if w > AH * 10 and mask.sum(axis=0).std() < 1:
+            return True
+        else:
+            return False
+
 def letter_contours(AH, im):
     _, contours, [hierarchy] = cv2.findContours(im ^ 255, cv2.RETR_CCOMP,
                                                 cv2.CHAIN_APPROX_SIMPLE)
     letters = top_contours(contours, hierarchy)
     letter_boxes = [tuple([letter] + list(cv2.boundingRect(letter))) for letter in letters]
     # Slightly tuned from paper (h < 3 * AH and h < AH / 4)
-    letter_boxes = filter(
-        lambda (_, x, y, w, h): h < 3 * AH and w < 3 * AH and h > AH / 3 and w > AH / 3,
-        letter_boxes
-    )
+    letter_boxes = filter(lambda t: valid_letter(AH, *t), letter_boxes)
 
     return letter_boxes
 
 def collate_lines(AH, word_boxes):
+    word_boxes = sorted(word_boxes, key=lambda (c, x, y, w, h): x)
     lines = []
     for word_box in word_boxes:
         _, x1, y1, w1, h1 = word_box
         # print "word:", x1, y1, w1, h1
         candidates = []
         for l in lines:
-            _, x2, y2, w2, h2 = l[-1]
-            if x2 < x1 and x1 < x2 + w2 + 6 * AH and y2 <= y1 + h1 and y1 <= y2 + h2:
-                # print "  candidate:", x2, y2, w2, h2
-                candidates.append((x1 - x2 - w2, l))
+            _, x0, y0, w0, h0 = l[-1]
+            if x0 + w0 - AH <= x1 and x1 < x0 + w0 + 6 * AH \
+                    and y0 <= y1 + h1 and y1 <= y0 + h0:
+                # print "  candidate:", x0, y0, w0, h0
+                candidates.append((x1 - x0 - w0, l))
 
         if candidates:
             candidates.sort(key=lambda (d, l): d)
@@ -327,10 +339,8 @@ def fast_stroke_width(im):
     dists = cv2.distanceTransform(inv, cv2.DIST_L2, 5)
     dists = dists.astype(np.uint8)
     stroke_radius = int(math.ceil(np.percentile(dists, 95)))
-    print 'stroke radius:', stroke_radius
     rect = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
     for idx in range(stroke_radius):
-        cv2.imwrite('{}.png'.format(idx), lib.normalize_u8(dists))
         dists = cv2.dilate(dists, rect)
         dists &= inv_mask
 
