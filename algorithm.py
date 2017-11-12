@@ -1,8 +1,10 @@
 import cv2
 import math
 import numpy as np
+# import numpy.polynomial.polynomial as poly
 
-from lib import debug_imwrite
+import lib
+from lib import debug_imwrite, is_bw
 from binarize import binarize
 
 cross33 = cv2.getStructuringElement(cv2.MORPH_CROSS, (3, 3))
@@ -17,7 +19,7 @@ def hsl_gray(im):
 
 def text_contours(im, original):
     im_h, im_w = im.shape
-    min_feature_size = im_h / 300
+    min_feature_size = im_h / 150
 
     copy = im.copy()
     cv2.rectangle(copy, (0, 0), (im_w, im_h), 255, 3)
@@ -33,7 +35,7 @@ def text_contours(im, original):
         while j >= 0:
             c = contours[j]
             x, y, w, h = cv2.boundingRect(c)
-            if w * h > image_area * 0.25:
+            if cv2.contourArea(c) > image_area * 0.3:
                 good_holes.append(j)
             j = hierarchy[j][0]
         i = hierarchy[i][0]
@@ -158,37 +160,56 @@ def top_contours(contours, hierarchy):
     return result
 
 def dominant_char_height(im):
-    _, contours, [hierarchy] = cv2.findContours(im, cv2.RETR_CCOMP,
+    _, contours, [hierarchy] = cv2.findContours(im ^ 255, cv2.RETR_CCOMP,
                                                 cv2.CHAIN_APPROX_SIMPLE)
-
-    char_heights = [
-        cv2.boundingRect(c)[3] for c in top_contours(contours, hierarchy)
-    ]
+    letters = top_contours(contours, hierarchy)
+    char_heights = [cv2.boundingRect(c)[3] for c in letters]
 
     hist, _ = np.histogram(char_heights, 256, [0, 256])
-    print hist
-    return np.argmax(hist)
+    AH = np.argmax(hist)
 
-def dewarp_text(im):
-    # Goal-Oriented Rectification
+    if lib.debug:
+        debug = cv2.cvtColor(im, cv2.COLOR_GRAY2BGR)
+        for c in letters:
+            x, y, w, h = cv2.boundingRect(c)
+            if h == AH:
+                cv2.rectangle(debug, (x, y), (x + w, y + h), (0, 255, 0), 2)
+        debug_imwrite('heights.png', debug)
 
-    AH = dominant_char_height(im)
-    print 'AH =', AH
+    return AH
 
+def word_contours(AH, im):
+    opened = cv2.morphologyEx(im ^ 255, cv2.MORPH_OPEN, cross33)
     horiz = cv2.getStructuringElement(cv2.MORPH_RECT, (int(AH * 0.6) | 1, 1))
-    rls = cv2.morphologyEx(im ^ 255, cv2.MORPH_CLOSE, horiz)
+    rls = cv2.morphologyEx(opened, cv2.MORPH_CLOSE, horiz)
     debug_imwrite('rls.png', rls)
 
     _, contours, [hierarchy] = cv2.findContours(rls, cv2.RETR_CCOMP,
                                                 cv2.CHAIN_APPROX_SIMPLE)
     words = top_contours(contours, hierarchy)
     word_boxes = [tuple([word] + list(cv2.boundingRect(word))) for word in words]
+    # Slightly tuned from paper (h < 3 * AH and h < AH / 4)
     word_boxes = filter(
-        lambda (_, x, y, w, h): h < 4 * AH and h > AH / 3 and w > AH / 3,
+        lambda (_, x, y, w, h): h < 3 * AH and h > AH / 3 and w > AH / 3,
         word_boxes
     )
-    word_boxes.sort(key=lambda (word, x, y, w, h): x)
 
+    return word_boxes
+
+def letter_contours(AH, im):
+    _, contours, [hierarchy] = cv2.findContours(im ^ 255, cv2.RETR_CCOMP,
+                                                cv2.CHAIN_APPROX_SIMPLE)
+    letters = top_contours(contours, hierarchy)
+    letter_boxes = [tuple([letter] + list(cv2.boundingRect(letter))) for letter in letters]
+    # Slightly tuned from paper (h < 3 * AH and h < AH / 4)
+    letter_boxes = filter(
+        lambda (_, x, y, w, h): h < 3 * AH and w < 3 * AH and h > AH / 3 and w > AH / 3,
+        letter_boxes
+    )
+
+    return letter_boxes
+
+def collate_lines(AH, word_boxes):
     lines = []
     for word_box in word_boxes:
         _, x1, y1, w1, h1 = word_box
@@ -203,22 +224,73 @@ def dewarp_text(im):
         if candidates:
             candidates.sort()
             _, line = candidates[-1]
-            _, x, y, w, h = line[-1]
             line.append(word_box)
             # print "  selected:", x, y, w, h
         else:
             lines.append([word_box])
 
+    return lines
+
+def dewarp_text(im):
+    # Goal-Oriented Rectification (Stamatopoulos
+    im_h, im_w = im.shape
+
+    AH = dominant_char_height(im)
+    print 'AH =', AH
+
+    word_boxes = word_contours(im)
+    lines = collate_lines(AH, word_boxes)
+
+    word_coords = [np.array([(x, y, x + w, y + h) for c, x, y, w, h in l]) for l in lines]
+    bounds = np.array([
+        word_coords[np.argmin(word_coords[:, 0]), 0],
+        word_coords[np.argmin(word_coords[:, 2]), 2]
+    ])
+    line_coords = [(
+        min((x for _, x, y, w, h in l)),
+        min((y for _, x, y, w, h in l)),
+        max((x + w for _, x, y, w, h in l)),
+        max((y + h for _, x, y, w, h in l)),
+    ) for l in lines]
+
+    widths = np.array([x2_ - x1_ for x1_, y1_, x2_, y2_ in line_coords])
+    median_width = np.median(widths)
+
+    line_coords = filter(lambda (x1, y1, x2, y2): x2 - x1 > median_width * 0.8,
+                         line_coords)
+
     debug = cv2.cvtColor(im, cv2.COLOR_GRAY2BGR)
     for _, x, y, w, h in word_boxes:
         cv2.rectangle(debug, (x, y), (x + w, y + h), (0, 255, 0), 1)
-    for l in lines:
-        min_x1 = min((x for _, x, y, w, h in l))
-        max_x2 = max((x + w for _, x, y, w, h in l))
-        min_y1 = min((y for _, x, y, w, h in l))
-        max_y2 = max((y + h for _, x, y, w, h in l))
-        cv2.rectangle(debug, (min_x1, min_y1), (max_x2, max_y2), (255, 0, 0), 2)
-    debug_imwrite('debug.png', debug)
+    for x1, y1, x2, y2 in line_coords:
+        cv2.rectangle(debug, (x1, y1), (x2, y2), (255, 0, 0), 2)
+    debug_imwrite('lines.png', debug)
+
+    left = np.array([(x, y) for _, x, y, _, _ in line_coords])
+    right = np.array([(x, y) for _, _, _, x, y in line_coords])
+    vertical_lines = []
+    bad_line_mask = np.array([False] * len(lines))
+    debug = cv2.cvtColor(im, cv2.COLOR_GRAY2BGR)
+    for coords in [left, right]:
+        masked = np.ma.MaskedArray(coords, np.ma.make_mask_none(coords.shape))
+        while np.ma.count(masked) > 2:
+            # fit line to coords
+            xs, ys = masked[:, 0], masked[:, 1]
+            [c0, c1] = np.ma.polyfit(xs, ys, 1)
+            diff = c0 + c1 * xs - ys
+            if np.linalg.norm(diff) > AH:
+                masked.mask[np.ma.argmax(masked)] = True
+
+        vertical_lines.append((c0, c1))
+        bad_line_mask |= masked.mask
+
+        cv2.line(debug, (0, c0), (im_w, c0 + c1 * im_w), (255, 0, 0), 3)
+
+    debug_imwrite('vertical.png', debug)
+
+    good_lines = np.where(~bad_line_mask)
+    AB = good_lines.min()
+    DC = good_lines.max()
 
     return im
 
@@ -246,3 +318,20 @@ def safe_rotate(im, angle):
     debug_imwrite('rotated.png', result)
     return result
 
+def fast_stroke_width(im, max_w):
+    # im should be black-on-white.
+    assert im.dtype == np.uint8 and is_bw(im)
+    # max_w = max stroke width detected.
+    assert max_w <= 255
+
+    eroded = im + 1
+    accum = np.zeros(im.shape, dtype=np.uint8)
+    for idx in range(max_w):
+        # cv2.imwrite('eroded{}.png'.format(idx), eroded * 255)
+        eroded = cv2.erode(eroded, cross33)
+        accum += eroded
+
+    crossxx = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (max_w, max_w))
+    accum = (im ^ 255) & cv2.dilate(accum, crossxx)
+
+    return accum

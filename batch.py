@@ -1,94 +1,188 @@
 import argparse
 import cv2
 import glob
+import numpy as np
 import os
 import re
 from multiprocessing.pool import Pool
-from os.path import join, basename, dirname, isfile
+from os.path import join, isfile
 from subprocess import check_call
 
-from algorithm import gradient, text_contours, binarize, skew_angle, safe_rotate
+import algorithm
+from algorithm import binarize, skew_angle, safe_rotate
 from binarize import adaptive_otsu
+from lib import debug_imwrite
+import lib
 
-def split_contours(contours):
+class Crop(object):
+    def __init__(self, x0, y0, x1, y1):
+        self.x0, self.y0 = x0, y0
+        self.x1, self.y1 = x1, y1
+
+    @property
+    def w(self):
+        return self.x1 - self.x0
+
+    @property
+    def h(self):
+        return self.y1 - self.y0
+
+    def nonempty(self):
+        return self.x0 <= self.x1 and self.y0 <= self.y1
+
+    def intersect(self, other):
+        return Crop(
+            max(self.x0, other.x0),
+            max(self.y0, other.y0),
+            min(self.x1, other.x1),
+            min(self.y1, other.y1),
+        )
+
+    @classmethod
+    def intersect_all(cls, crops):
+        return reduce(Crop.intersect, crops)
+
+    def union(self, other):
+        return Crop(
+            min(self.x0, other.x0),
+            min(self.y0, other.y0),
+            max(self.x1, other.x1),
+            max(self.y1, other.y1),
+        )
+
+    @classmethod
+    def union_all(cls, crops):
+        return reduce(Crop.union, crops)
+
+    def apply(self, im):
+        assert self.nonempty()
+        return im[self.y0:self.y1, self.x0:self.x1]
+
+    @classmethod
+    def full(cls, im):
+        h, w = im.shape
+        return Crop(0, 0, w, h)
+
+    @classmethod
+    def null(cls, im):
+        h, w = im.shape
+        return Crop(w, h, 0, 0)
+
+    @classmethod
+    def from_rect(cls, x, y, w, h):
+        return Crop(x, y, x + w, y + h)
+
+    def __repr__(self):
+        return "Crop({}, {}, {}, {})".format(self.x0, self.y0, self.x1, self.y1)
+
+def split_crops(crops):
     # Maximize horizontal separation
     # sorted by starting x value, ascending).
-    x_contours = [(cv2.boundingRect(c)[0], c) for c in contours]
-    sorted_contours = sorted(x_contours, key=lambda (x, c): x)
+    crops = sorted(crops, key=lambda crop: crop.x0)
 
     # Greedy algorithm. Maximize L bound of R minus R bound of L.
     current_r = 0
     quantity = 0
     argmax = -1
-    for idx in range(len(contours) - 1):
-        x1, _, w, _ = cv2.boundingRect(sorted_contours[idx][1])
-        current_r = max(current_r, x1 + w)
-        x2, _ = sorted_contours[idx + 1]
+    for idx, crop in enumerate(crops[:-1]):
+        current_r = max(current_r, crop.x1)
+        x2 = crops[idx + 1].x1
         if x2 - current_r > quantity:
             quantity = x2 - current_r
             argmax = idx
 
-    print 'split:', argmax, 'out of', len(contours), '@', current_r
+    print 'split:', argmax, 'out of', len(crops), '@', current_r
 
-    sorted_contours = [c for x, c in sorted_contours]
-    return sorted_contours[:argmax + 1], sorted_contours[argmax + 1:]
+    return [l for l in (crops[:argmax + 1], crops[argmax + 1:]) if l]
 
-def crop_to_contours(im, contour_set):
-    im_w, im_h = len(im[0]), len(im)
-
-    crop_x0, crop_y0, crop_x1, crop_y1 = im_w, im_h, 0, 0
-    for c in contour_set:
-        x, y, w, h = cv2.boundingRect(c)
-        crop_x0 = min(x, crop_x0)
-        crop_y0 = min(y, crop_y0)
-        crop_x1 = max(x + w, crop_x1)
-        crop_y1 = max(y + h, crop_y1)
-
-    crop_x0 = int(max(0, crop_x0 - .01 * im_h))
-    crop_y0 = int(max(0, crop_y0 - .01 * im_h))
-    crop_x1 = int(min(im_w, crop_x1 + .01 * im_h))
-    crop_y1 = int(min(im_h, crop_y1 + .01 * im_h))
-
-    return ((crop_x0, crop_y0), (crop_x1, crop_y1))
+def draw_box(debug, c, color, thickness):
+    x, y, w, h = cv2.boundingRect(c)
+    cv2.rectangle(debug, (x, y), (x + w, y + h), (0, 255, 0), 4)
 
 def crop(im, bw, split=True):
-    im_w, im_h = len(im[0]), len(im)
+    im_h, im_w = im.shape
 
-    grad = gradient(bw)
-    cv2.imwrite("grad.png", grad)
-    space_width = (im_h / 50) | 1
-    line_height = (im_h / 100) | 1
-    box = cv2.getStructuringElement(cv2.MORPH_RECT, (space_width, line_height))
-    closed = cv2.morphologyEx(grad, cv2.MORPH_CLOSE, box)
-    cv2.imwrite("closed.png", closed)
+    AH = algorithm.dominant_char_height(bw)
+    letter_boxes = algorithm.letter_contours(AH, bw)
+    lines = algorithm.collate_lines(AH, letter_boxes)
 
-    open_size = (im_h / 800) | 1
-    cross = cv2.getStructuringElement(cv2.MORPH_CROSS, (open_size, open_size))
-    opened = cv2.morphologyEx(closed, cv2.MORPH_OPEN, cross)
-    cv2.imwrite("opened.png", opened)
+    stroke_widths = algorithm.fast_stroke_width(bw, AH / 3)
+    debug_imwrite('strokes.png', lib.normalize_u8(stroke_widths))
 
-    good_contours, bad_contours = text_contours(opened, bw)
+    mask = np.zeros(im.shape, dtype=np.uint8)
+    letter_contours = [c for (c, _, _, _, _) in letter_boxes]
+    cv2.drawContours(mask, letter_contours, -1, 255, thickness=cv2.FILLED)
+
+    masked_strokes = np.ma.masked_where(mask ^ 255, stroke_widths)
+    print masked_strokes
+    strokes_mean = masked_strokes.mean()
+    strokes_std = masked_strokes.std()
+    print 'overall: mean:', strokes_mean, 'std:', strokes_std
 
     debug = cv2.cvtColor(im, cv2.COLOR_GRAY2RGB)
-    for c in good_contours:
-        x, y, w, h = cv2.boundingRect(c)
-        cv2.rectangle(debug, (x, y), (x + w, y + h), (0, 255, 0), 4)
-    for c in bad_contours:
-        x, y, w, h = cv2.boundingRect(c)
-        cv2.rectangle(debug, (x, y), (x + w, y + h), (0, 0, 255), 4)
+    line_crops = []
+    for line in lines:
+        line_crop = Crop.null(bw)
+        for c, x, y, w, h in line:
+            crop = Crop.from_rect(x, y, w, h)
+
+            mask = np.zeros((h, w), dtype=np.uint8)
+            cv2.drawContours(mask, [c], 0, 255,
+                             thickness=cv2.FILLED, offset=(-x, -y))
+            masked_strokes = np.ma.masked_where(mask ^ 255,
+                                                crop.apply(stroke_widths))
+            print 'mean:', masked_strokes.mean(), 'std:', masked_strokes.std()
+            mean = masked_strokes.mean()
+            std = masked_strokes.std()
+            if abs(mean - strokes_mean) > strokes_std or std > strokes_std * 1.5:
+                print 'skipping', x, y
+                draw_box(debug, c, (0, 0, 255), 2)
+            else:
+                draw_box(debug, c, (0, 255, 0), 2)
+                line_crop = line_crop.union(crop)
+
+        line_crops.append(line_crop)
+
+    debug_imwrite("debug.png", debug)
 
     if split and im_w > im_h:  # two pages
-        cv2.imwrite("debug.png", debug)
-        contour_sets = split_contours(good_contours)
+        crop_sets = split_crops(line_crops)
     else:
-        contour_sets = [good_contours]
+        crop_sets = [line_crops]
 
-    return [crop_to_contours(im, cs) for cs in contour_sets]
+    return [Crop.union_all(cs) for cs in crop_sets]
 
 extension = '.tif'
-def process_image(fn, indir, outdir, dpi):
-    inpath = join(indir, fn)
-    outfiles = glob.glob('{}/{}_*{}'.format(outdir, fn[:-4], extension))
+def process_image(original):
+    # original = cv2.resize(original, (0, 0), None, 1.5, 1.5)
+    im_h, im_w = original.shape
+    # image height should be about 10 inches. round to 100
+    dpi = int(round(im_h / 1100.0) * 100)
+    print 'detected dpi:', dpi
+    split = im_w > im_h # two pages
+
+    bw = binarize(original, adaptive_otsu, resize=1.0)
+    debug_imwrite('thresholded.png', bw)
+    crops = crop(original, bw, split=split)
+
+    outimgs = []
+    for idx, c in enumerate(crops):
+        if c.nonempty():
+            bw_cropped = c.apply(bw)
+            orig_cropped = c.apply(original)
+            angle = skew_angle(bw_cropped)
+            rotated = safe_rotate(orig_cropped, angle)
+
+            lib.debug = False
+            rotated_bw = binarize(rotated, adaptive_otsu, resize=1.0)
+            new_crop = crop(rotated, rotated_bw, split=False)[0]
+
+            outimgs.append(new_crop.apply(rotated_bw))
+
+    return dpi, outimgs
+
+def process_file((inpath, outdir)):
+    outfiles = glob.glob('{}/{}_*{}'.format(outdir, inpath[:-4], extension))
     if outfiles:
         print 'skipping', inpath
         return outfiles
@@ -96,63 +190,43 @@ def process_image(fn, indir, outdir, dpi):
         print 'processing', inpath
 
     original = cv2.imread(inpath, cv2.IMREAD_UNCHANGED)
-    im_h, im_w = original.shape
-    bw = binarize(original, adaptive_otsu, resize=1.0)
-    cv2.imwrite('thresholded.png', bw)
-    crops = crop(original, bw)
-
-    outfiles = []
-    for idx, c in enumerate(crops):
-        (x0, y0), (x1, y1) = c
-        if x1 > x0 and y1 > y0:
-            bw_cropped = bw[y0:y1, x0:x1]
-            orig_cropped = original[y0:y1, x0:x1]
-            angle = skew_angle(bw_cropped)
-            rotated = safe_rotate(orig_cropped, angle)
-
-            rotated_bw = binarize(rotated, adaptive_otsu, resize=1.0)
-            new_crop = crop(rotated, rotated_bw, split=False)[0]
-            (x0r, y0r), (x1r, y1r) = new_crop
-
-            outimg = rotated_bw[y0r:y1r, x0r:x1r]
-            outfile = '{}/{}_{}{}'.format(outdir, fn[:-4], idx, extension)
-            print '    writing', outfile
-            cv2.imwrite(outfile, outimg)
-            check_call(['tiffset', '-s', '282', str(dpi), outfile])
-            check_call(['tiffset', '-s', '283', str(dpi), outfile])
-            outfiles.append(outfile)
+    dpi, outimgs = process_image(original)
+    for idx, outimg in enumerate(outimgs):
+        outfile = '{}/{}_{}{}'.format(outdir, inpath[:-4], idx, extension)
+        print '    writing', outfile
+        cv2.imwrite(outfile, outimg)
+        check_call(['tiffset', '-s', '282', str(dpi), outfile])
+        check_call(['tiffset', '-s', '283', str(dpi), outfile])
+        outfiles.append(outfile)
 
     return outfiles
 
 def run(args):
     if args.single_file:
+        lib.debug = True
         im = cv2.imread(args.single_file, cv2.IMREAD_UNCHANGED)
-    else:
-        files = filter(lambda f: re.search('.(png|jpg|tif)$', f),
-                    os.listdir(args.indir))
-        files.sort(key=lambda f: map(int, re.findall('[0-9]+', f)))
-        im = cv2.imread(join(args.indir, files[0]), cv2.IMREAD_UNCHANGED)
-
-    im_h, im_w = im.shape
-    # image height should be about 10 inches. round to 100
-    dpi = int(round(im_h / 1000.0) * 100)
-    print 'detected dpi:', dpi
-
-    if args.single_file:
-        process_image(basename(args.single_file), dirname(args.single_file), '.', dpi)
+        _, outimgs = process_image(im)
+        for idx, outimg in enumerate(outimgs):
+            cv2.imwrite('out{}.png'.format(idx), outimg)
         return
+
+    paths = [[join(indir, fn) for fn in os.listdir(indir)] for indir in args.indirs]
+    files = filter(lambda f: re.search('.(png|jpg|tif)$', f),
+                sum(paths, []))
+    files.sort(key=lambda f: map(int, re.findall('[0-9]+', f)))
+    im = cv2.imread(files[0], cv2.IMREAD_UNCHANGED)
+    print args.indirs
+    for d in args.indirs:
+        if not os.path.isdir(join(args.outdir, d)):
+            os.makedirs(join(args.outdir, d))
 
     if args.concurrent:
         pool = Pool(2)
-        outfiles = pool.map(process_image, files
-                            [args.indir] * len(files),
-                            [args.outdir] * len(files),
-                            [dpi] * len(files))
+        outfiles = pool.map(process_image, zip(files,
+                            [args.outdir] * len(files)))
     else:
-        outfiles = map(process_image, files,
-                       [args.indir] * len(files),
-                       [args.outdir] * len(files),
-                       [dpi] * len(files))
+        outfiles = map(process_image, zip(files,
+                       [args.outdir] * len(files)))
 
     outfiles = sum(outfiles, [])
     outfiles.sort(key=lambda f: map(int, re.findall('[0-9]+', f)))
@@ -170,11 +244,10 @@ def run(args):
             '-o', outpdf, outtif
         ])
 
-
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Batch-process for PDF')
-    parser.add_argument('indir', nargs='?', help="Input directory")
     parser.add_argument('outdir', nargs='?', help="Output directory")
+    parser.add_argument('indirs', nargs='+', help="Input directory")
     parser.add_argument('-f', '--file', dest='single_file', action='store',
                         help="Run on single file instead")
     parser.add_argument('-c', '--concurrent', action='store_true',
