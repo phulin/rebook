@@ -222,7 +222,7 @@ def collate_lines(AH, word_boxes):
                 candidates.append((x1 - x2 - w2, l))
 
         if candidates:
-            candidates.sort()
+            candidates.sort(key=lambda (d, l): d)
             _, line = candidates[-1]
             line.append(word_box)
             # print "  selected:", x, y, w, h
@@ -318,20 +318,20 @@ def safe_rotate(im, angle):
     debug_imwrite('rotated.png', result)
     return result
 
-def fast_stroke_width(im, max_w):
+def fast_stroke_width(im):
     # im should be black-on-white.
     assert im.dtype == np.uint8 and is_bw(im)
-    # max_w = max stroke width detected.
-    assert max_w <= 255
 
-    eroded = im + 1
-    accum = np.zeros(im.shape, dtype=np.uint8)
-    for idx in range(max_w):
-        # cv2.imwrite('eroded{}.png'.format(idx), eroded * 255)
-        eroded = cv2.erode(eroded, cross33)
-        accum += eroded
+    inv = im + 1
+    inv_mask = im ^ 255
+    dists = cv2.distanceTransform(inv, cv2.DIST_L2, 5)
+    dists = dists.astype(np.uint8)
+    stroke_radius = int(math.ceil(np.percentile(dists, 95)))
+    print 'stroke radius:', stroke_radius
+    rect = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
+    for idx in range(stroke_radius):
+        cv2.imwrite('{}.png'.format(idx), lib.normalize_u8(dists))
+        dists = cv2.dilate(dists, rect)
+        dists &= inv_mask
 
-    crossxx = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (max_w, max_w))
-    accum = (im ^ 255) & cv2.dilate(accum, crossxx)
-
-    return accum
+    return dists
