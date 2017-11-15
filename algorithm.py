@@ -5,7 +5,7 @@ import numpy as np
 
 import lib
 from lib import debug_imwrite, is_bw
-from binarize import binarize
+# from binarize import binarize
 
 cross33 = cv2.getStructuringElement(cv2.MORPH_CROSS, (3, 3))
 def gradient(im):
@@ -85,45 +85,33 @@ def text_contours(im, original):
 # and y > 0.02 * im_h \
 # and y + h < 0.98 * im_h:
 
-def _line_contours(im):
-    im_h, _ = im.shape
-    bw = ~binarize(im)
-    debug_imwrite('bw.png', bw)
+def skew_angle(im, orig, AH, lines):
+    if len(orig.shape) == 2:
+        lines_debug = cv2.cvtColor(orig, cv2.COLOR_GRAY2RGB)
+    else:
+        lines_debug = orig.copy()
 
-    space_width = (im_h / 70) | 1
-    # line_height = (im_h / 300) | 1
-
-    # struct = np.zeros((line_height, space_width), dtype=np.uint8)
-    # cv2.line(struct, (0, 0), (space_width - 1, line_height - 1), 1)
-    # cv2.line(struct, (space_width - 1, 0), (0, line_height - 1), 1)
-    # bw1 = cv2.morphologyEx(bw, cv2.MORPH_CLOSE, struct)
-
-    # circle = cv2.getStructuringElement(cv2.MORPH_ELLIPSE,
-    #                                    (line_height, line_height))
-    # bw2 = cv2.morphologyEx(bw1, cv2.MORPH_CLOSE, circle)
-    horiz = cv2.getStructuringElement(cv2.MORPH_RECT, (space_width, 1))
-    bw2 = cv2.morphologyEx(bw, cv2.MORPH_CLOSE, horiz)
-
-    line_contours, _ = text_contours(bw2, im)
-
-    return bw, line_contours
-
-def skew_angle(im):
-    small_bw, line_contours = _line_contours(im)
-
-    lines = cv2.cvtColor(small_bw, cv2.COLOR_GRAY2RGB)
     alphas = []
-    for c in line_contours:
-        x, y, w, h = cv2.boundingRect(c)
-        if w > 4 * h:
-            vx, vy, x1, y1 = cv2.fitLine(c, cv2.DIST_L2, 0, 0.01, 0.01)
-            cv2.line(lines,
-                     (x1 - vx * 10000, y1 - vy * 10000),
-                     (x1 + vx * 10000, y1 + vy * 10000),
-                     (255, 0, 0), thickness=3)
-            alphas.append(math.atan2(vy, vx))
+    for l in lines:
+        if len(l) < 10: continue
 
-    debug_imwrite('lines.png', lines)
+        points = np.array([(x + w / 2, y + h) for (_, x, y, w, h) in l])
+        ys = np.array([y + h for _, x, y, w, h in l])
+        ys_padded = np.pad(ys, 2, 'edge')
+        ys_average = (ys_padded[4:] + ys_padded[3:-1] +
+                      ys_padded[1:-3] + ys_padded[:-4]) / 4
+        points_masked = points[ys >= ys_average - AH / 8]
+        # print 'masked:', len(points) - len(points_masked), 'out of', len(points)
+
+        vx, vy, x1, y1 = cv2.fitLine(points_masked, cv2.DIST_L2, 0, 0.01, 0.01)
+        cv2.line(lines_debug,
+                    (x1 - vx * 10000, y1 - vy * 10000),
+                    (x1 + vx * 10000, y1 + vy * 10000),
+                    (255, 0, 0), thickness=3)
+        alphas.append(math.atan2(vy, vx))
+
+    debug_imwrite('lines.png', lines_debug)
+
     return np.median(alphas)
 
 def lu_dewarp(im):
@@ -197,25 +185,33 @@ def word_contours(AH, im):
     return word_boxes
 
 def valid_letter(AH, c, x, y, w, h):
-    if h < 3 * AH and w < 3 * AH and h > AH / 2 and w > AH / 3:
-        return True
-    else:
-        # catch horiz lines
-        mask = np.zeros((h, w), dtype=np.uint8)
-        cv2.drawContours(mask, [c], 0, 1,
-                         thickness=cv2.FILLED, offset=(-x, -y))
-        if w > AH * 10 and mask.sum(axis=0).std() < 1:
-            return True
-        else:
-            return False
+    return h < 3 * AH and w < 3 * AH and h > AH / 2 and w > AH / 3
 
 def letter_contours(AH, im):
     _, contours, [hierarchy] = cv2.findContours(im ^ 255, cv2.RETR_CCOMP,
                                                 cv2.CHAIN_APPROX_SIMPLE)
-    letters = top_contours(contours, hierarchy)
-    letter_boxes = [tuple([letter] + list(cv2.boundingRect(letter))) for letter in letters]
+    all_contours = top_contours(contours, hierarchy)
+    letter_boxes = [tuple([letter] + list(cv2.boundingRect(letter))) for letter in all_contours]
     # Slightly tuned from paper (h < 3 * AH and h < AH / 4)
     letter_boxes = filter(lambda t: valid_letter(AH, *t), letter_boxes)
+
+    min_y = min([y for (c, x, y, w, h) in letter_boxes])
+    max_y = max([y + h for (c, x, y, w, h) in letter_boxes])
+
+    idx = 0
+    while idx >= 0:
+        # catch horiz lines
+        c = contours[idx]
+        x, y, w, h = cv2.boundingRect(c)
+        mask = np.zeros((h, w), dtype=np.uint8)
+        cv2.drawContours(mask, [c], 0, 1,
+                         thickness=cv2.FILLED, offset=(-x, -y))
+        proj = mask.sum(axis=0)
+        max_height_var = np.percentile(proj, 95) - np.percentile(proj, 5)
+        if hierarchy[idx][2] == -1 and w > AH * 10 and max_height_var <= 3 and y <= max_y and y + h >= min_y and h < AH:
+            letter_boxes.append((c, x, y, w, h))
+
+        idx = hierarchy[idx][0]
 
     return letter_boxes
 
@@ -304,7 +300,7 @@ def dewarp_text(im):
     AB = good_lines.min()
     DC = good_lines.max()
 
-    return im
+    return AB, DC, bounds
 
 def safe_rotate(im, angle):
     debug_imwrite('prerotated.png', im)
@@ -312,6 +308,9 @@ def safe_rotate(im, angle):
     if abs(angle) > math.pi / 4:
         print "warning: too much rotation"
         return im
+
+    angle_deg = angle * 180 / math.pi
+    print 'rotating to angle:', angle_deg, 'deg'
 
     im_h_new = im_w * abs(math.sin(angle)) + im_h * math.cos(angle)
     im_w_new = im_h * abs(math.sin(angle)) + im_w * math.cos(angle)
@@ -321,8 +320,6 @@ def safe_rotate(im, angle):
 
     padded = np.pad(im, (pad_h, pad_w), 'constant', constant_values=255)
     padded_h, padded_w = padded.shape
-    angle_deg = angle * 180 / math.pi
-    print 'rotating to angle:', angle_deg, 'deg'
     matrix = cv2.getRotationMatrix2D((padded_w / 2, padded_h / 2), angle_deg, 1)
     result = cv2.warpAffine(padded, matrix, (padded_w, padded_h),
                             borderMode=cv2.BORDER_CONSTANT,

@@ -9,8 +9,8 @@ from os.path import join, isfile
 from subprocess import check_call
 
 import algorithm
-from algorithm import binarize, skew_angle, safe_rotate
-from binarize import adaptive_otsu
+from algorithm import skew_angle, safe_rotate
+from binarize import binarize, adaptive_otsu
 from lib import debug_imwrite
 import lib
 
@@ -166,18 +166,20 @@ def crop(im, bw, split=True):
         mask = np.zeros((h, w), dtype=np.uint8)
         cv2.drawContours(mask, [c], 0, 255,
                          thickness=cv2.FILLED, offset=(-x, -y))
-        if w > (im_w / 6 if split else im_w / 3):
+        if w > (im_w / 8 if split else im_w / 4):
             good_big_contours[y:y + h, x:x + w] = mask
 
-    line_crops = filter(lambda lc: lc.nonempty() and not np.all(lc.apply(good_big_contours) == 0),
+    line_crops = filter(lambda lc: lc.nonempty() and \
+                        not np.all(lc.apply(good_big_contours) == 0),
                         line_crops)
+    assert line_crops and all((lc.nonempty() for lc in line_crops))
 
     if split and im_w > im_h:  # two pages
         crop_sets = split_crops(line_crops)
     else:
         crop_sets = [line_crops]
 
-    return [Crop.union_all(cs) for cs in crop_sets]
+    return AH, lines, [Crop.union_all(cs) for cs in crop_sets]
 
 extension = '.tif'
 def process_image(original):
@@ -190,19 +192,19 @@ def process_image(original):
 
     bw = binarize(original, adaptive_otsu, resize=1.0)
     debug_imwrite('thresholded.png', bw)
-    crops = crop(original, bw, split=split)
+    AH, lines, crops = crop(original, bw, split=split)
 
     outimgs = []
     for idx, c in enumerate(crops):
         if c.nonempty():
             bw_cropped = c.apply(bw)
             orig_cropped = c.apply(original)
-            angle = skew_angle(bw_cropped)
+            angle = skew_angle(bw_cropped, original, AH, lines)
             rotated = safe_rotate(orig_cropped, angle)
 
             lib.debug = False
             rotated_bw = binarize(rotated, adaptive_otsu, resize=1.0)
-            new_crop = crop(rotated, rotated_bw, split=False)[0]
+            _, _, [new_crop] = crop(rotated, rotated_bw, split=False)
 
             outimgs.append(new_crop.apply(rotated_bw))
 
@@ -242,7 +244,7 @@ def run(args):
                 sum(paths, []))
     files.sort(key=lambda f: map(int, re.findall('[0-9]+', f)))
     im = cv2.imread(files[0], cv2.IMREAD_UNCHANGED)
-    print args.indirs
+
     for d in args.indirs:
         if not os.path.isdir(join(args.outdir, d)):
             os.makedirs(join(args.outdir, d))
