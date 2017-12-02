@@ -184,12 +184,13 @@ def crop(im, bw, split=True):
     return AH, lines, [Crop.union_all(cs) for cs in crop_sets]
 
 extension = '.tif'
-def process_image(original):
+def process_image(original, dpi):
     # original = cv2.resize(original, (0, 0), None, 1.5, 1.5)
     im_h, im_w = original.shape
     # image height should be about 10 inches. round to 100
-    dpi = int(round(im_h / 1100.0) * 100)
-    print 'detected dpi:', dpi
+    if not dpi:
+        dpi = int(round(im_h / 1100.0) * 100)
+        print 'detected dpi:', dpi
     split = im_w > im_h # two pages
 
     bw = binarize(original, adaptive_otsu, resize=1.0)
@@ -208,11 +209,12 @@ def process_image(original):
             rotated_bw = binarize(rotated, adaptive_otsu, resize=1.0)
             _, _, [new_crop] = crop(rotated, rotated_bw, split=False)
 
-            outimgs.append(new_crop.apply(rotated_bw))
+            if new_crop.nonempty():
+                outimgs.append(new_crop.apply(rotated_bw))
 
     return dpi, outimgs
 
-def process_file((inpath, outdir)):
+def process_file((inpath, outdir, dpi)):
     outfiles = glob.glob('{}/{}_*{}'.format(outdir, inpath[:-4], extension))
     if outfiles:
         print 'skipping', inpath
@@ -221,7 +223,7 @@ def process_file((inpath, outdir)):
         print 'processing', inpath
 
     original = cv2.imread(inpath, cv2.IMREAD_UNCHANGED)
-    dpi, outimgs = process_image(original)
+    dpi, outimgs = process_image(original, dpi)
     for idx, outimg in enumerate(outimgs):
         outfile = '{}/{}_{}{}'.format(outdir, inpath[:-4], idx, extension)
         print '    writing', outfile
@@ -236,7 +238,7 @@ def run(args):
     if args.single_file:
         lib.debug = True
         im = cv2.imread(args.single_file, cv2.IMREAD_UNCHANGED)
-        _, outimgs = process_image(im)
+        _, outimgs = process_image(im, args.dpi)
         for idx, outimg in enumerate(outimgs):
             cv2.imwrite('out{}.png'.format(idx), outimg)
         return
@@ -254,10 +256,12 @@ def run(args):
     if args.concurrent:
         pool = Pool(2)
         outfiles = pool.map(process_file, zip(files,
-                            [args.outdir] * len(files)))
+                            [args.outdir] * len(files),
+                            [args.dpi] * len(files)))
     else:
         outfiles = map(process_file, zip(files,
-                       [args.outdir] * len(files)))
+                       [args.outdir] * len(files),
+                       [args.dpi] * len(files)))
 
     outfiles = sum(outfiles, [])
     outfiles.sort(key=lambda f: map(int, re.findall('[0-9]+', f)))
@@ -283,5 +287,7 @@ if __name__ == '__main__':
                         help="Run on single file instead")
     parser.add_argument('-c', '--concurrent', action='store_true',
                         help="Run w/ threads.")
+    parser.add_argument('-d', '--dpi', action='store', type=int,
+                        help="Force a particular DPI")
 
     run(parser.parse_args())
