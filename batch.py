@@ -76,6 +76,7 @@ class Crop(object):
         return "Crop({}, {}, {}, {})".format(self.x0, self.y0, self.x1, self.y1)
 
 def draw_crop(im, crop, color, thickness=2):
+    if not lib.debug: return
     cv2.rectangle(im, (crop.x0, crop.y0), (crop.x1, crop.y1), color, thickness)
 
 def split_crops(crops):
@@ -85,11 +86,12 @@ def split_crops(crops):
 
     # Greedy algorithm. Maximize L bound of R minus R bound of L.
     current_r = 0
-    quantity = 0
+    quantity = -100000
     argmax = -1
     for idx, crop in enumerate(crops[:-1]):
         current_r = max(current_r, crop.x1)
-        x2 = crops[idx + 1].x1
+        x2 = crops[idx + 1].x0
+        # print 'x2:', x2, 'r:', current_r, 'quantity:', x2 - current_r
         if x2 - current_r > quantity:
             quantity = x2 - current_r
             argmax = idx
@@ -99,6 +101,7 @@ def split_crops(crops):
     return [l for l in (crops[:argmax + 1], crops[argmax + 1:]) if l]
 
 def draw_box(debug, c, color, thickness):
+    if not lib.debug: return
     x, y, w, h = cv2.boundingRect(c)
     cv2.rectangle(debug, (x, y), (x + w, y + h), color, 4)
 
@@ -122,11 +125,11 @@ def crop(im, bw, split=True):
     print 'overall: mean:', strokes_mean, 'std:', strokes_std
 
     debug = cv2.cvtColor(im, cv2.COLOR_GRAY2RGB)
-    line_crop_debug = cv2.cvtColor(im, cv2.COLOR_GRAY2RGB)
     line_crops = []
     good_contours = []
     for line in lines:
         line_crop = Crop.null(bw)
+        if len(line) <= 1: continue
         for c, x, y, w, h in line:
             crop = Crop.from_rect(x, y, w, h)
 
@@ -138,7 +141,7 @@ def crop(im, bw, split=True):
             # print 'mean:', masked_strokes.mean(), 'std:', masked_strokes.std()
             mean = masked_strokes.mean()
             if mean < strokes_mean - strokes_std:
-                print 'skipping', x, y
+                print 'skipping', x, y,
                 print '  mean:', masked_strokes.mean(), 'std:', masked_strokes.std()
                 draw_box(debug, c, (0, 0, 255), 2)
             else:
@@ -147,32 +150,31 @@ def crop(im, bw, split=True):
                 good_contours.append(c)
 
         line_crops.append(line_crop)
-        draw_crop(line_crop_debug, line_crop, (0, 255, 0))
+
+    line_lefts = np.array([lc.x0 for lc in line_crops])
+    line_rights = np.array([lc.x1 for lc in line_crops])
+    line_start_thresh = np.percentile(line_lefts, 30)
+    line_end_thresh = np.percentile(line_rights, 70)
+    good_line_crops = []
+    line_crop_debug = cv2.cvtColor(im, cv2.COLOR_GRAY2RGB)
+    for line_crop in line_crops:
+        if split == False and \
+                (line_crop.x1 + 10 * AH < line_start_thresh or
+                 line_crop.x0 - 10 * AH > line_end_thresh):
+            draw_crop(line_crop_debug, line_crop, (0, 0, 255))
+        else:
+            good_line_crops.append(line_crop)
+            draw_crop(line_crop_debug, line_crop, (0, 255, 0))
 
     debug_imwrite("line_debug.png", line_crop_debug)
     debug_imwrite("debug.png", debug)
 
-    mask = np.zeros(im.shape, dtype=np.uint8)
-    cv2.drawContours(mask, good_contours, -1, 255, thickness=cv2.FILLED)
-    rect = cv2.getStructuringElement(cv2.MORPH_RECT, (1, AH * 8))
-    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, rect)
-    _, contours, [hierarchy] = \
-        cv2.findContours(mask, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
-    big_contours = algorithm.top_contours(contours, hierarchy)
-    debug_imwrite("big_contours.png", mask)
-    good_big_contours = np.zeros(im.shape, dtype=np.uint8)
-    for c in big_contours:
-        x, y, w, h = cv2.boundingRect(c)
-        mask = np.zeros((h, w), dtype=np.uint8)
-        cv2.drawContours(mask, [c], 0, 255,
-                         thickness=cv2.FILLED, offset=(-x, -y))
-        if w > (im_w / 8 if split else im_w / 4):
-            good_big_contours[y:y + h, x:x + w] = mask
-
     line_crops = filter(lambda lc: lc.nonempty() and \
-                        not np.all(lc.apply(good_big_contours) == 0),
-                        line_crops)
-    assert line_crops and all((lc.nonempty() for lc in line_crops))
+                        not np.all(lc.apply(bw) == 255),
+                        good_line_crops)
+
+    if not line_crops:
+        return AH, lines, [Crop.full(im)]
 
     if split and im_w > im_h:  # two pages
         crop_sets = split_crops(line_crops)

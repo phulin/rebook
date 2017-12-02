@@ -154,7 +154,8 @@ def dominant_char_height(im):
     char_heights = [cv2.boundingRect(c)[3] for c in letters]
 
     hist, _ = np.histogram(char_heights, 256, [0, 256])
-    AH = np.argmax(hist)
+    # TODO: make depend on DPI.
+    AH = np.argmax(hist[8:]) + 8  # minimum height 8
 
     if lib.debug:
         debug = cv2.cvtColor(im, cv2.COLOR_GRAY2BGR)
@@ -162,6 +163,8 @@ def dominant_char_height(im):
             x, y, w, h = cv2.boundingRect(c)
             if h == AH:
                 cv2.rectangle(debug, (x, y), (x + w, y + h), (0, 255, 0), 2)
+            else:
+                cv2.rectangle(debug, (x, y), (x + w, y + h), (0, 0, 255), 2)
         debug_imwrite('heights.png', debug)
 
     return AH
@@ -224,7 +227,7 @@ def collate_lines(AH, word_boxes):
         candidates = []
         for l in lines:
             _, x0, y0, w0, h0 = l[-1]
-            if x0 + w0 - AH <= x1 and x1 < x0 + w0 + 6 * AH \
+            if x0 + w0 - AH <= x1 and x1 < x0 + w0 + 4 * AH \
                     and y0 <= y1 + h1 and y1 <= y0 + h0:
                 # print "  candidate:", x0, y0, w0, h0
                 candidates.append((x1 - x0 - w0, l))
