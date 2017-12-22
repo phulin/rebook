@@ -1,10 +1,12 @@
 import cv2
 import numpy as np
+import time
 
 debug = False
+debug_prefix = ''
 def debug_imwrite(path, im):
     if debug:
-        cv2.imwrite(path, im)
+        cv2.imwrite(debug_prefix + path, im)
 
 def normalize_u8(im):
     im_max = im.max()
@@ -20,3 +22,13 @@ def bool_to_u8(im):
 
 def is_bw(im):
     return (im + 1 < 2).all()
+
+def timeit(method):
+    def timed(*args, **kw):
+        ts = time.time()
+        result = method(*args, **kw)
+        te = time.time()
+        print '*** timer:%r  %2.2f ms' % \
+                (method.__name__, (te - ts) * 1000)
+        return result
+    return timed

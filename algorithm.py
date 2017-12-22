@@ -5,17 +5,11 @@ import numpy as np
 
 import lib
 from lib import debug_imwrite, is_bw
-# from binarize import binarize
+from letters import Letter, TextLine
 
 cross33 = cv2.getStructuringElement(cv2.MORPH_CROSS, (3, 3))
 def gradient(im):
     return cv2.morphologyEx(im, cv2.MORPH_GRADIENT, cross33)
-
-def hsl_gray(im):
-    assert len(im.shape) == 3
-    hls = cv2.cvtColor(im, cv2.COLOR_RGB2HLS)
-    _, l, s = cv2.split(hls)
-    return s, l
 
 def text_contours(im, original):
     im_h, im_w = im.shape
@@ -194,13 +188,24 @@ def letter_contours(AH, im):
     _, contours, [hierarchy] = cv2.findContours(im ^ 255, cv2.RETR_CCOMP,
                                                 cv2.CHAIN_APPROX_SIMPLE)
     all_contours = top_contours(contours, hierarchy)
-    letter_boxes = [tuple([letter] + list(cv2.boundingRect(letter))) for letter in all_contours]
+    letter_boxes = [Letter(letter, *cv2.boundingRect(letter)) for letter in all_contours]
+
+    if lib.debug:
+        debug = cv2.cvtColor(im, cv2.COLOR_GRAY2BGR)
+        for l in letter_boxes:
+            l.box(debug, color=(0, 255, 0) if valid_letter(AH, *l) else (0, 0, 255))
+        lib.debug_imwrite('letters.png', debug)
+
     # Slightly tuned from paper (h < 3 * AH and h < AH / 4)
-    letter_boxes = filter(lambda t: valid_letter(AH, *t), letter_boxes)
+    letter_boxes = filter(lambda t: valid_letter(AH, *t.tuple()), letter_boxes)
 
-    min_y = min([y for (c, x, y, w, h) in letter_boxes])
-    max_y = max([y + h for (c, x, y, w, h) in letter_boxes])
+    return letter_boxes
 
+def horizontal_lines(AH, im):
+    _, contours, [hierarchy] = cv2.findContours(im ^ 255, cv2.RETR_CCOMP,
+                                                cv2.CHAIN_APPROX_SIMPLE)
+
+    result = []
     idx = 0
     while idx >= 0:
         # catch horiz lines
@@ -211,13 +216,14 @@ def letter_contours(AH, im):
                          thickness=cv2.FILLED, offset=(-x, -y))
         proj = mask.sum(axis=0)
         max_height_var = np.percentile(proj, 95) - np.percentile(proj, 5)
-        if hierarchy[idx][2] == -1 and w > AH * 10 and max_height_var <= 3 and y <= max_y and y + h >= min_y and h < AH:
-            letter_boxes.append((c, x, y, w, h))
+        if hierarchy[idx][2] == -1 and w > AH * 10 and max_height_var <= 3 and h < AH:
+            result.append((c, x, y, w, h))
 
         idx = hierarchy[idx][0]
 
-    return letter_boxes
+    return result
 
+@lib.timeit
 def collate_lines(AH, word_boxes):
     word_boxes = sorted(word_boxes, key=lambda (c, x, y, w, h): x)
     lines = []
@@ -227,23 +233,53 @@ def collate_lines(AH, word_boxes):
         candidates = []
         for l in lines:
             _, x0, y0, w0, h0 = l[-1]
-            if x0 + w0 - AH <= x1 and x1 < x0 + w0 + 4 * AH \
-                    and y0 <= y1 + h1 and y1 <= y0 + h0:
-                # print "  candidate:", x0, y0, w0, h0
-                candidates.append((x1 - x0 - w0, l))
+            _, x0p, y0p, w0p, h0p = l[-2] if len(l) > 1 else l[-1]
+            if x1 < x0 + w0 + 4 * AH and y0 <= y1 + h1 and y1 <= y0 + h0:
+                candidates.append((x1 - x0 - w0 + abs(y1 - y0), l))
+            elif x1 < x0p + w0p + AH and y0p <= y1 + h1 and y1 <= y0p + h0p:
+                candidates.append((x1 - x0p - w0p + abs(y1 - y0p), l))
 
         if candidates:
             candidates.sort(key=lambda (d, l): d)
-            _, line = candidates[-1]
+            _, line = candidates[0]
             line.append(word_box)
             # print "  selected:", x, y, w, h
         else:
             lines.append([word_box])
 
-    return lines
+    return [TextLine(l) for l in lines]
+
+@lib.timeit
+def collate_lines_2(AH, word_boxes):
+    word_boxes = sorted(word_boxes, key=lambda (c, x, y, w, h): x)
+    lines = []
+    for word_box in word_boxes:
+        _, x1, y1, w1, h1 = word_box
+        # print "word:", x1, y1, w1, h1
+        best_candidate = None
+        best_score = 100000
+        for l in lines:
+            _, x0, y0, w0, h0 = l[-1]
+            _, x0p, y0p, w0p, h0p = l[-2] if len(l) > 1 else l[-1]
+            score = best_score
+            if x1 < x0 + w0 + 4 * AH and y0 <= y1 + h1 and y1 <= y0 + h0:
+                score = x1 - x0 - w0 + abs(y1 - y0)
+            elif x1 < x0p + w0p + AH and y0p <= y1 + h1 and y1 <= y0p + h0p:
+                score = x1 - x0p - w0p + abs(y1 - y0p)
+            if score < best_score:
+                best_score = score
+                best_candidate = l
+
+        if best_candidate:
+            best_candidate.append(word_box)
+            # print "  selected:", x, y, w, h
+        else:
+            lines.append([word_box])
+
+    return [TextLine(l) for l in lines]
 
 def dewarp_text(im):
-    # Goal-Oriented Rectification (Stamatopoulos
+    # Goal-Oriented Rectification (Stamatopoulos et al. 2011)
     im_h, im_w = im.shape
 
     AH = dominant_char_height(im)
