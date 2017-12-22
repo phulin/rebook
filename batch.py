@@ -11,69 +11,9 @@ from subprocess import check_call
 import algorithm
 from algorithm import skew_angle, safe_rotate
 from binarize import binarize, adaptive_otsu
+from geometry import Crop
 from lib import debug_imwrite
 import lib
-
-class Crop(object):
-    def __init__(self, x0, y0, x1, y1):
-        self.x0, self.y0 = x0, y0
-        self.x1, self.y1 = x1, y1
-
-    @property
-    def w(self):
-        return self.x1 - self.x0
-
-    @property
-    def h(self):
-        return self.y1 - self.y0
-
-    def nonempty(self):
-        return self.x0 <= self.x1 and self.y0 <= self.y1
-
-    def intersect(self, other):
-        return Crop(
-            max(self.x0, other.x0),
-            max(self.y0, other.y0),
-            min(self.x1, other.x1),
-            min(self.y1, other.y1),
-        )
-
-    @classmethod
-    def intersect_all(cls, crops):
-        return reduce(Crop.intersect, crops)
-
-    def union(self, other):
-        return Crop(
-            min(self.x0, other.x0),
-            min(self.y0, other.y0),
-            max(self.x1, other.x1),
-            max(self.y1, other.y1),
-        )
-
-    @classmethod
-    def union_all(cls, crops):
-        return reduce(Crop.union, crops)
-
-    def apply(self, im):
-        assert self.nonempty()
-        return im[self.y0:self.y1, self.x0:self.x1]
-
-    @classmethod
-    def full(cls, im):
-        h, w = im.shape
-        return Crop(0, 0, w, h)
-
-    @classmethod
-    def null(cls, im):
-        h, w = im.shape
-        return Crop(w, h, 0, 0)
-
-    @classmethod
-    def from_rect(cls, x, y, w, h):
-        return Crop(x, y, x + w, y + h)
-
-    def __repr__(self):
-        return "Crop({}, {}, {}, {})".format(self.x0, self.y0, self.x1, self.y1)
 
 def draw_crop(im, crop, color, thickness=2):
     if not lib.debug: return
@@ -88,7 +28,7 @@ def split_crops(crops):
     current_r = 0
     quantity = -100000
     argmax = -1
-    for idx, crop in enumerate(crops[:-1]):
+    for idx, crop in list(enumerate(crops))[2:-3]:
         current_r = max(current_r, crop.x1)
         x2 = crops[idx + 1].x0
         # print 'x2:', x2, 'r:', current_r, 'quantity:', x2 - current_r
@@ -153,14 +93,13 @@ def crop(im, bw, split=True):
 
     line_lefts = np.array([lc.x0 for lc in line_crops])
     line_rights = np.array([lc.x1 for lc in line_crops])
-    line_start_thresh = np.percentile(line_lefts, 30)
-    line_end_thresh = np.percentile(line_rights, 70)
+    line_start_thresh = np.percentile(line_lefts, 15 if split else 30)
+    line_end_thresh = np.percentile(line_rights, 85 if split else 70)
     good_line_crops = []
     line_crop_debug = cv2.cvtColor(im, cv2.COLOR_GRAY2RGB)
     for line_crop in line_crops:
-        if split == False and \
-                (line_crop.x1 + 10 * AH < line_start_thresh or
-                 line_crop.x0 - 10 * AH > line_end_thresh):
+        if (line_crop.x1 + 15 * AH < line_start_thresh or
+            line_crop.x0 - 15 * AH > line_end_thresh):
             draw_crop(line_crop_debug, line_crop, (0, 0, 255))
         else:
             good_line_crops.append(line_crop)
