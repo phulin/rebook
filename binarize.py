@@ -1,11 +1,19 @@
 import cv2
 import numpy as np
 import numpy.polynomial.polynomial as poly
+import sys
 from skimage.filters import threshold_sauvola, threshold_niblack
 
+# from algorithm import fast_stroke_width
 from lib import clip_u8, bool_to_u8, debug_imwrite
 
 cross33 = cv2.getStructuringElement(cv2.MORPH_CROSS, (3, 3))
+
+def hsl_gray(im):
+    assert len(im.shape) == 3
+    hls = cv2.cvtColor(im, cv2.COLOR_RGB2HLS)
+    _, l, s = cv2.split(hls)
+    return s, l
 
 def otsu(im):
     _, thresh = cv2.threshold(im, 0, 255, cv2.THRESH_BINARY | cv2.THRESH_OTSU)
@@ -19,8 +27,9 @@ def ntirogiannis2014(im):
     M_eroded = cv2.morphologyEx(M, cv2.MORPH_ERODE, cross33)
 
     s = (im_h / 600) | 1
-    ellipse = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (s, s))
-    background = cv2.morphologyEx(im, cv2.MORPH_DILATE, ellipse)
+    horiz = cv2.getStructuringElement(cv2.MORPH_RECT, (s, 1))
+    vert = cv2.getStructuringElement(cv2.MORPH_RECT, (1, s))
+    background = cv2.dilate(cv2.dilate(im, horiz), vert)
 
     inpainted = (M_eroded & im) | (~M_eroded & background)
     cv2.imwrite('inpainted.png', inpainted)
@@ -109,7 +118,7 @@ def horiz_zero_run_lengths(im):
 
 def yan(im, alpha=0.4):
     im_h, im_w = im.shape
-    first_pass = otsu(im)
+    first_pass = adaptive_otsu(im)
 
     horiz_runs = horiz_zero_run_lengths(first_pass)
     vert_runs = horiz_zero_run_lengths(first_pass.T)
@@ -234,7 +243,7 @@ def lu2010(im):
 
 def adaptive_otsu(im):
     im_h, _ = im.shape
-    s = (im_h / 300) | 1
+    s = (im_h / 200) | 1
     ellipse = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (s, s))
     background = cv2.morphologyEx(im, cv2.MORPH_DILATE, ellipse)
     bg_float = background.astype(np.float64)
@@ -243,6 +252,24 @@ def adaptive_otsu(im):
     normalized = clip_u8(C / bg_float * im)
     debug_imwrite('norm.png', normalized)
     return otsu(normalized)
+
+def su2013(im, gamma=0.25):
+    W = 5
+    horiz = cv2.getStructuringElement(cv2.MORPH_RECT, (W, 1))
+    vert = cv2.getStructuringElement(cv2.MORPH_RECT, (1, W))
+    I_min = cv2.erode(cv2.erode(im, horiz), vert)
+    I_max = cv2.dilate(cv2.dilate(im, horiz), vert)
+    diff = I_max - I_min
+    C = diff.astype(np.float32) / (I_max + I_min + 1e-16)
+
+    alpha = (im.std() / 128.0) ** gamma
+    print 'alpha:', alpha
+    C_a = alpha * C + (1 - alpha) * diff
+
+    _, C_a_bw = cv2.threshold(C_a, 0, 255, cv2.THRESH_BINARY | cv2.THRESH_OTSU)
+
+    # TODO: finish
+    return C_a_bw
 
 def binarize(im, algorithm=adaptive_otsu, resize=1.0):
     # clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(5, 5))
@@ -259,3 +286,11 @@ def binarize(im, algorithm=adaptive_otsu, resize=1.0):
             # img = clahe.apply(img)
             # cv2.imwrite('clahe.png', img)
             return algorithm(im)
+
+def go(argv):
+    im = cv2.imread(argv[1], cv2.IMREAD_UNCHANGED)
+    out = binarize(im, algortihm=su2013)
+    cv2.imwrite('out.png', out)
+
+if __name__ == '__main__':
+    go(sys.argv)
