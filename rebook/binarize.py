@@ -21,17 +21,10 @@ def otsu(im):
     return thresh
 
 def ntirogiannis2014(im):
-    # TODO: real inpainting alg
     im_h, _ = im.shape
-    M = niblack(im, window_size=61, k=0.2)
-    M_eroded = cv2.morphologyEx(M, cv2.MORPH_ERODE, cross33)
+    IM = niblack(im, window_size=61, k=0.2)
 
-    s = (im_h / 600) | 1
-    horiz = cv2.getStructuringElement(cv2.MORPH_RECT, (s, 1))
-    vert = cv2.getStructuringElement(cv2.MORPH_RECT, (1, s))
-    background = cv2.dilate(cv2.dilate(im, horiz), vert)
-
-    inpainted = (M_eroded & im) | (~M_eroded & background)
+    inpainted = inpaint.inpaint
     cv2.imwrite('inpainted.png', inpainted)
 
     im_f = im.astype(float) + 1
@@ -289,7 +282,7 @@ def binarize(im, algorithm=adaptive_otsu, resize=1.0):
 
 def go(argv):
     im = cv2.imread(argv[1], cv2.IMREAD_UNCHANGED)
-    out = binarize(im, algortihm=su2013)
+    out = binarize(im, algorithm=su2013)
     cv2.imwrite('out.png', out)
 
 if __name__ == '__main__':
