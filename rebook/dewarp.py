@@ -1,20 +1,23 @@
 import cv2
 import itertools
-# import matplotlib.pyplot as plt
 import numpy as np
-import skimage.measure
+import scipy
 import sys
 
 from math import sqrt, cos, sin, acos, atan2, pi
-from numpy.polynomial import Polynomial as P
+from numpy.linalg import norm
+from numpy.polynomial import Polynomial as Poly
 from scipy import interpolate
+from scipy import optimize as opt
 from scipy.ndimage import grey_dilation
+from skimage.measure import ransac
 
 import algorithm
 import binarize
 from geometry import Crop, Line
 from letters import TextLine
 import lib
+import newton
 
 BLUE = (255, 0, 0)
 GREEN = (0, 255, 0)
@@ -22,6 +25,7 @@ RED = (0, 0, 255)
 
 # focal length f = 3270.5 pixels
 f = 3270.5
+Of = np.array([0, 0, f])
 
 def compress(l, flags):
     return list(itertools.compress(l, flags))
@@ -52,7 +56,7 @@ def peak_points(l, AH):
 
 class PolyModel5(object):
     def estimate(self, data):
-        self.params = P.fit(data[:, 0], data[:, 1], 5, domain=[-1, 1])
+        self.params = Poly.fit(data[:, 0], data[:, 1], 5, domain=[-1, 1])
         return True
 
     def residuals(self, data):
@@ -73,7 +77,7 @@ def merge_lines(AH, lines):
         if abs(integ(x_max) - integ(x_min)) / (x_max - x_min) < AH / 8.0:
             out_lines[-1].merge(line)
             points = np.array([letter.base_point() for letter in out_lines[-1]])
-            new_model, inliers = skimage.measure.ransac(points, PolyModel5, 10, AH / 15.0)
+            new_model, inliers = ransac(points, PolyModel5, 10, AH / 15.0)
             out_lines[-1].compress(inliers)
             out_lines[-1].model = new_model
         else:
@@ -96,10 +100,10 @@ def remove_outliers(im, AH, lines):
         if len(l) < 5: continue
 
         points = np.array([letter.base_point() for letter in l])
-        model, inliers = skimage.measure.ransac(points, PolyModel5, 10, AH / 15.0)
+        model, inliers = ransac(points, PolyModel5, 10, AH / 10.0)
         poly = model.params
         l.model = poly
-        trace_baseline(lines_debug, l, BLUE)
+        # trace_baseline(lines_debug, l, BLUE)
         for p, is_in in zip(points, inliers):
             color = GREEN if is_in else RED
             cv2.circle(lines_debug, tuple(p.astype(int)), 4, color, -1)
@@ -112,13 +116,13 @@ def remove_outliers(im, AH, lines):
 # x = my + b model weighted t
 class LinearXModel(object):
     def estimate(self, data):
-        self.params = P.fit(data[:, 1], data[:, 0], 1, domain=[-1, 1])
+        self.params = Poly.fit(data[:, 1], data[:, 0], 1, domain=[-1, 1])
         return True
 
     def residuals(self, data):
         return abs(self.params(data[:, 1]) - data[:, 0])
 
-def side_lines(im, AH, lines):
+def estimate_vanishing(im, AH, lines):
     im_h, im_w = im.shape
 
     left_bounds = np.array([l[0].left_mid() for l in lines])
@@ -127,7 +131,7 @@ def side_lines(im, AH, lines):
     vertical_lines = []
     debug = cv2.cvtColor(im, cv2.COLOR_GRAY2BGR)
     for coords in [left_bounds, right_bounds]:
-        model, inliers = skimage.measure.ransac(coords, LinearXModel, 3, AH / 10.0)
+        model, inliers = ransac(coords, LinearXModel, 3, AH / 10.0)
         vertical_lines.append(model.params)
         for p, inlier in zip(coords, inliers):
             color = GREEN if inlier else RED
@@ -138,12 +142,16 @@ def side_lines(im, AH, lines):
     lib.debug_imwrite('vertical.png', debug)
 
     p_left, p_right = vertical_lines
-    full_line_mask = np.logical_and(
-        abs(p_left(left_bounds[:, 1]) - left_bounds[:, 0]) < AH / 2,
-        abs(p_right(right_bounds[:, 1]) - right_bounds[:, 0]) < AH / 2
-    )
+    vy, = (p_left - p_right).roots()
+    return np.array((p_left(vy), vy))
 
-    return compress(lines, full_line_mask), vertical_lines
+    # p_left, p_right = vertical_lines
+    # full_line_mask = np.logical_and(
+    #     abs(p_left(left_bounds[:, 1]) - left_bounds[:, 0]) < AH / 2,
+    #     abs(p_right(right_bounds[:, 1]) - right_bounds[:, 0]) < AH / 2
+    # )
+
+    # return compress(lines, full_line_mask), vertical_lines
 
 def centroid(poly, line):
     first, last = line[0], line[-1]
@@ -170,27 +178,21 @@ def C0_C1(lines, v):
 def widest_domain(lines, v, n_points):
     C0, C1 = C0_C1(lines, v)
 
-    C0_left, C0_right = C0[0].left_bot(), C0[-1].right_bot()
-    C1_left, C1_right = C1[0].left_bot(), C1[-1].right_bot()
+    v_lefts = [Line.from_points(v, l[0].left_bot()) for l in lines if l is not C0]
+    v_rights = [Line.from_points(v, l[-1].right_bot()) for l in lines if l is not C0]
+    C0_lefts = [l.text_line_intersect(C0)[0] for l in v_lefts]
+    C0_rights = [l.text_line_intersect(C0)[0] for l in v_rights]
 
-    v_C1_left = Line.from_points(v, C1_left)
-    v_C1_right = Line.from_points(v, C1_right)
-
-    C1_left_C0 = v_C1_left.text_line_intersect(C0)
-    C1_right_C0 = v_C1_right.text_line_intersect(C0)
-
-    # TODO: fix offsets
-    x_min = min(C0_left[0], C1_left_C0[0]) - 20
-    x_max = max(C0_right[0], C1_right_C0[0]) + 20
+    x_min = min(C0.left(), min(C0_lefts))
+    x_max = max(C0.left(), max(C0_rights))
     domain = np.linspace(x_min, x_max, n_points)
 
     debug = cv2.cvtColor(bw, cv2.COLOR_GRAY2BGR)
-    cv2.line(debug, tuple(C0[0].base_point().astype(int)),
-             tuple(C0[-1].base_point().astype(int)), GREEN, 2)
-    cv2.line(debug, tuple(C1[0].base_point().astype(int)),
-             tuple(C1[-1].base_point().astype(int)), GREEN, 2)
-    Line.from_points(v, C1_left).draw(debug)
-    Line.from_points(v, C1_right).draw(debug)
+    for l in lines:
+        cv2.line(debug, tuple(l[0].left_bot().astype(int)),
+                tuple(l[-1].right_bot().astype(int)), GREEN, 2)
+    Line.from_points(v, (x_min, C0(x_min))).draw(debug)
+    Line.from_points(v, (x_max, C0(x_max))).draw(debug)
     lib.debug_imwrite('domain.png', debug)
 
     return domain, C0, C1
@@ -219,7 +221,7 @@ def estimate_directrix(lines, v, n_points_w):
     ])
 
     D_points = np.linalg.inv(A).dot(C_points)
-    arc_lengths = np.linalg.norm(np.diff(D_points.T, axis=0), axis=1)
+    arc_lengths = norm(np.diff(D_points.T, axis=0), axis=1)
     cumulative_arc = np.hstack([[0], np.cumsum(arc_lengths)])
     D = interpolate.interp1d(cumulative_arc, D_points, assume_sorted=True)
 
@@ -241,21 +243,18 @@ def estimate_directrix(lines, v, n_points_w):
 
     return D_points_arc, C_points_arc
 
-def aspect_ratio(im, lines, D, v):
+def aspect_ratio(im, lines, D, v, O):
     vx, vy = v
     C0, C1 = C0_C1(lines, v)
 
     im_h, im_w = im.shape
-    # Guess O.
-    # TODO: Actually compute this, or crop and keep around, etc.
-    O = np.array((im_w / 2.0, im_h / 2.0))
 
     m = -(vx - O[0]) / (vy - O[1])
     L0 = Line.from_point_slope(C0.first_base(), m)
     L1 = Line.from_point_slope(C1.first_base(), m)
     perp = L0.altitude(v)
     p0, p1 = L0.intersect(perp), L1.intersect(perp)
-    h_img = np.linalg.norm(p0 - p1)
+    h_img = norm(p0 - p1)
 
     L = Line(m, -m * O[0] - (f ** 2) / (vy - O[1]))
     F = L.altitude(v).intersect(L)
@@ -263,7 +262,7 @@ def aspect_ratio(im, lines, D, v):
     p0r = np.array([x0r + w0r / 2.0, y0r + h0r])
     F_C0r = Line.from_points(F, p0r)
     q0 = F_C0r.intersect(L0)
-    l_img = np.linalg.norm(q0 - p0)
+    l_img = norm(q0 - p0)
 
     debug = cv2.cvtColor(im, cv2.COLOR_GRAY2BGR)
     L0.draw(debug)
@@ -274,12 +273,12 @@ def aspect_ratio(im, lines, D, v):
 
     # Convergence line perp to V=(vx, vy, f)
     # y = -vx / vy * x + -f^2 / vy
-    alpha = atan2(np.linalg.norm(p1 - O), f)
+    alpha = atan2(norm(p1 - O), f)
     theta = acos(f / sqrt((vx - O[0]) ** 2 + (vy - O[1]) ** 2 + f ** 2))
     beta = pi / 2 - theta
 
     lp_img = abs(D[0][-1] - D[0][0])
-    wp_img = np.linalg.norm(np.diff(D.T, axis=0), axis=1).sum()
+    wp_img = norm(np.diff(D.T, axis=0), axis=1).sum()
     print 'h_img:', h_img, 'l\'_img:', lp_img, 'alpha:', alpha
     print 'l_img:', l_img, 'w\'_img:', wp_img, 'beta:', beta
     r = h_img * lp_img * cos(alpha) / (l_img * wp_img * cos(alpha + beta))
@@ -298,9 +297,9 @@ class MuMode(object):
 
     def point(self, l):
         if self.val:
-            return l.top_point() + np.array([0, -20])
+            return l.top_point()  # + np.array([0, -20])
         else:
-            return l.base_point() + np.array([0, 20])
+            return l.base_point()  # + np.array([0, 20])
 
 MuMode.BOTTOM = MuMode(False)
 MuMode.TOP = MuMode(True)
@@ -348,17 +347,15 @@ def generate_mesh(all_lines, lines, C_arc, v, n_points_h):
         alphas = mus * lam / (mus + lam - 1)
         longitudes.append(np.outer(1 - alphas, p0) + np.outer(alphas, p1))
 
-    # print longitudes[-1][::20]
+    result = np.array(longitudes)
 
-    # result = np.array(longitudes)
-
-    # debug = cv2.cvtColor(bw, cv2.COLOR_GRAY2BGR)
-    # for l in result:
-    #     for p in l:
-    #         cv2.circle(debug, tuple(p.astype(long)), 2, BLUE, -1)
-    # trace_baseline(debug, C0, RED)
-    # trace_baseline(debug, C1, RED)
-    # lib.debug_imwrite('mesh.png', debug)
+    debug = cv2.cvtColor(bw, cv2.COLOR_GRAY2BGR)
+    for l in result[::50]:
+        for p in l[::50]:
+            cv2.circle(debug, tuple(p.astype(long)), 6, BLUE, -1)
+    trace_baseline(debug, C0, RED)
+    trace_baseline(debug, C1, RED)
+    lib.debug_imwrite('mesh.png', debug)
 
     return np.array(longitudes).transpose(1, 0, 2)
 
@@ -369,7 +366,7 @@ def correct_geometry(orig, mesh, r):
     xmesh, ymesh = mesh32[:, :, 0], mesh32[:, :, 1]
     conv_xmesh, conv_ymesh = cv2.convertMaps(xmesh, ymesh, cv2.CV_16SC2)
     out = cv2.remap(orig, conv_xmesh, conv_ymesh, interpolation=cv2.INTER_LINEAR)
-    lib.debug_imwrite('dewarped.png', out)
+    lib.debug_imwrite('corrected.png', out)
 
     return out
 
@@ -463,6 +460,17 @@ def draw_contours(im, contours, hierarchy, y_offset_interp, idx, color,
                           255 - color, depth=depth + 1, passed_offset=pass_offset)
         idx = hierarchy[idx][0]
 
+def full_lines(AH, lines, v):
+    C0 = max(lines, key=lambda l: l.right() - l.left())
+
+    v_lefts = [Line.from_points(v, l[0].left_bot()) for l in lines if l is not C0]
+    v_rights = [Line.from_points(v, l[-1].right_bot()) for l in lines if l is not C0]
+    C0_lefts = [l.text_line_intersect(C0)[0] for l in v_lefts]
+    C0_rights = [l.text_line_intersect(C0)[0] for l in v_rights]
+
+    mask = np.logical_and(C0_lefts <= C0.left() + AH, C0_rights >= C0.right() - AH)
+    return compress(lines, mask)
+
 def get_AH_lines(im):
     AH = algorithm.dominant_char_height(im)
     print 'AH =', AH
@@ -471,51 +479,91 @@ def get_AH_lines(im):
     all_lines = algorithm.collate_lines_2(AH, letters)
     all_lines.sort(key=lambda l: l[0].y)
 
-    if lib.debug:
-        global curvature_debug
-        curvature_debug = cv2.cvtColor(bw, cv2.COLOR_GRAY2BGR)
-        all_lines = filter(valid_curvature, all_lines)
-        lib.debug_imwrite('curvature.png', curvature_debug)
-
     lines = remove_outliers(im, AH, all_lines)
 
     return AH, all_lines, lines
 
+N_LONGS = 15
+def vanishing_point(lines, v0, O):
+    C0 = lines[-1] if v0[1] < 0 else lines[0]
+    others = lines[:-1] if v0[1] < 0 else lines[1:]
+
+    domain = np.linspace(C0.left(), C0.right(), N_LONGS + 2)[1:-1]
+    C0_points = np.array([domain, C0.model(domain)]).T
+    longitudes = [Line.from_points(v0, p) for p in C0_points]
+
+    lefts = [longitudes[0].text_line_intersect(line)[0] for line in others]
+    rights = [longitudes[-1].text_line_intersect(line)[0] for line in others]
+    valid_mask = [line.left() <= L and R < line.right() \
+                   for line, L, R in zip(others, lefts, rights)]
+
+    valid_lines = [C0] + compress(others, valid_mask)
+    derivs = [line.model.deriv() for line in valid_lines]
+    print 'valid lines:', len(others)
+
+    convergences = []
+    for longitude in longitudes:
+        intersects = [longitude.text_line_intersect(line) for line in valid_lines]
+        tangents = [Line.from_point_slope(p, d(p[0])) \
+                    for p, d in zip(intersects, derivs)]
+        convergences.append(Line.best_intersection(tangents))
+
+    # x vx + y vy + f^2 = 0
+    # m = -vx / vy
+    # b = -f^2 / vy
+
+
+    L = Line.fit(convergences)
+    # shift into O-origin coords
+    L_O = L.offset(-O)
+    vy = -(f ** 2) / L_O.b
+    vx = -vy * L_O.m
+    v = np.array((vx, vy)) + O
+
+    debug = cv2.cvtColor(bw, cv2.COLOR_GRAY2BGR)
+    for t in tangents: t.draw(debug, color=RED)
+    for longitude in longitudes:
+        longitude.draw(debug)
+    L.draw(debug, color=GREEN)
+    lib.debug_imwrite('vanish.png', debug)
+
+    return v, f, L
+
 def dewarp(orig):
     # Meng et al., Metric Rectification of Curved Document Images
     lib.debug = True
-    im = binarize.binarize(orig, algorithm=lambda im: binarize.yan(im, alpha=0.3))
+    im = binarize.binarize(orig, algorithm=binarize.ntirogiannis2014)
     global bw
     bw = im
     im_h, im_w = im.shape
 
     AH, all_lines, lines = get_AH_lines(im)
 
-    # debug = cv2.cvtColor(bw, cv2.COLOR_GRAY2BGR)
-    # for l in all_lines:
-    #     for l1, l2 in zip(l, l[1:]):
-    #         cv2.line(debug, tuple(l1.base_point().astype(int)),
-    #                  tuple(l2.base_point().astype(int)), BLUE, 2)
-    # lib.debug_imwrite('all_lines.png', debug)
+    debug = cv2.cvtColor(bw, cv2.COLOR_GRAY2BGR)
+    for l in all_lines:
+        for l1, l2 in zip(l, l[1:]):
+            cv2.line(debug, tuple(l1.base_point().astype(int)),
+                     tuple(l2.base_point().astype(int)), RED, 2)
+    lib.debug_imwrite('all_lines.png', debug)
 
-    lines, verticals = side_lines(im, AH, lines)
-    print 'full lines:', len(lines)
+    v0 = estimate_vanishing(im, AH, lines)
 
-    p_left, p_right = verticals
-    vy, = (p_left - p_right).roots()
-    vx = p_left(vy)
-    v0 = np.array((vx, vy))
-
-    # TODO: make vanishing point determination optimal
+    O = np.array((im_w / 2.0, im_h / 2.0))
     v = v0
     print 'vanishing point:', v
+    for i in range(5):
+        v, L = vanishing_point(lines, v, O)
+        print 'vanishing point:', v
+
+    lines = full_lines(AH, lines, v)
 
     box = min_crop(all_lines)
     D, C_arc = estimate_directrix(lines, v, box.w)
 
-    r = aspect_ratio(im, lines, D, v)
-    r = 1.7  # TODO: fix
+    r = aspect_ratio(im, lines, D, v, O)
     print 'aspect ratio H/W:', r
+    print 'fixing to 1.7'
+    r = 1.7  # TODO: fix
 
     print 'generating mesh...'
     mesh = generate_mesh(all_lines, lines, C_arc, v, r * box.w)
@@ -531,10 +579,206 @@ def dewarp(orig):
 
     return dewarped
 
+# rotation matrix for rotation by ||theta|| around axis theta
+# theta: 3component x N; return: 3 x 3matrix x N
+def R_theta(theta):
+    # these are all N-vectors
+    T = norm(theta, axis=0)
+    t1, t2, t3 = theta / T
+    c, s = np.cos(T / 2), np.sin(T / 2)
+    ss = s * s
+    cs = c * s
+
+    return np.array([
+        [2 * (t1 * t1 - 1) * ss + 1,
+         2 * t1 * t2 * ss - 2 * t3 * cs,
+         2 * t1 * t3 * ss + 2 * t2 * cs],
+        [2 * t1 * t2 * ss + 2 * t3 * cs,
+         2 * (t2 * t2 - 1) * ss + 1,
+         2 * t2 * t3 * ss - 2 * t1 * cs],
+        [2 * t1 * t2 * ss - 2 * t2 * cs,
+         2 * t2 * t3 * ss + 2 * t1 * cs,
+         2 * (t3 * t3 - 1) * ss + 1]
+    ])
+
+# def t_i_k(theta, R, g, points):
+#     rays = R.dot(points)
+#     t0s = f / rays[2]
+#     ts = []
+#     for ray, t0 in zip(rays.T, t0s):
+#         # solve: g(ray[0] * t) - ray[2] * t = 0
+#         g_ray = g(Poly([0, ray[0]])) - Poly([0, ray[2]])
+#         g_rayp = g_ray.deriv()
+# 
+#         t = opt.newton(g_ray, t0, fprime=g_rayp, fprime2 = g_rayp.deriv())
+#         ts.append(t)
+# 
+#     # print 'final ts:', ts
+#     return np.array(ts), rays
+
+# O: two-dimensional origin (middle of image)
+def base_points(line, O):
+    return np.vstack([np.array([l.base_point() - O for l in line]).T, [f] * len(line)])
+
+# lm = fake parameter representing line position
+def E_str(theta, g, l_m, line_points):
+    R = R_theta(theta)
+
+    residuals = []
+    for points, l_k in zip(line_points, l_m):
+        ts, rays = newton.t_i_k(theta, R, g, points)
+        _, Ys, _ = ts * rays
+        residuals.append(Ys - l_k)
+
+    result = np.hstack(residuals)
+    print 'norm:', norm(result)
+    return result
+
+DEGREE = 9
+def unpack_args(args):
+    return np.split(np.array(args), (3, 3 + DEGREE + 1))
+
+def E_str_packed(args, line_points):
+    theta, a_m, l_m = unpack_args(args)
+    return E_str(theta, Poly(a_m), l_m, line_points)
+
+def dR_dthetai(theta, R, i):
+    T = norm(theta)
+    inc = T / 16384
+    delta = np.zeros(3)
+    delta[i] = inc
+    Rp = R_theta(theta + delta)
+    return (Rp - R) / inc
+
+def dR_dtheta(theta, R):
+    return np.array([dR_dthetai(theta, R, i) for i in range(3)])
+
+def dE_str_dthetai(theta, R, dR, g, gp, line_points, line_ts_rays):
+    partials = []
+    for points, (ts, rays) in zip(line_points, line_ts_rays):
+        Xs, _, _ = ts * rays
+
+        # dR: 3derivs x r__; dR[:, 0]: 3derivs x r1_; points: 3comps x Npoints
+        # A: 3 x Npoints
+        A1 = dR[:, 0].dot(points) * ts
+        A2 = -dR[:, 0, 2] * f
+        A = A1.T + A2
+        B = R[0].dot(points)
+        C1 = dR[:, 2].dot(points) * ts  # 3derivs x Npoints
+        C2 = -dR[:, 2, 2] * f           # 3derivs
+        C = C1.T + C2
+        D = R[2].dot(points)
+        slopes = gp(Xs)
+        dt_dthetai = (C.T - slopes * A.T) / (D - slopes * B)  # N x 3
+        # print 'dt_dthetai:', dt_dthetai
+        # import IPython
+        # IPython.embed()
+
+        term1 = dR[:, 1].dot(points) * ts       # 3 x N
+        term2 = R[1].dot(points) * dt_dthetai  # 3 x N
+        term3 = dR[:, 1, 2] * f                   # 3
+        partials.append(term1.T + term2.T + term3)  # N x 3
+
+    return np.concatenate(partials)
+
+def dE_str_dam(theta, R, g, gp, line_points, line_ts_rays):
+    partials = []
+    for points, (ts, rays) in zip(line_points, line_ts_rays):
+        Xs, _, _ = ts * rays  # Xs: N
+
+        powers = np.vstack([Xs ** m for m in range(g.degree() + 1)])  # D x N
+        denom = R[2].dot(points) - gp(Xs) * R[0].dot(points)          # N
+        dt_dam = powers / denom                                       # D x N
+        partials.append((R[1].dot(points) * dt_dam).T)                # D x N
+
+    return np.concatenate(partials, axis=0)
+
+def dE_str_dl_k(lines):
+    blocks = [np.full((len(l), 1), -1) for l in lines]
+    return scipy.linalg.block_diag(*blocks)
+
+def kim2014(orig):
+    lib.debug = True
+    im = binarize.binarize(orig, algorithm=binarize.ntirogiannis2014)
+    global bw
+    bw = im
+
+    im_h, im_w = im.shape
+    O = np.array((im_w / 2.0, im_h / 2.0))
+
+    AH, all_lines, lines = get_AH_lines(im)
+
+    # typical viewpoint
+    theta_0 = [-0.2, 0, 0]
+    # flat surface
+    a_m_0 = [f] + [0] * DEGREE
+
+
+    # medians of original lines
+    line_points = [base_points(line, O) for line in lines]
+    l_m_0 = [points[1].mean() for points in line_points]
+    dE_dl = dE_str_dl_k(lines)
+
+    def Jac(args, lines):
+        theta, a_m, l_m = np.split(np.array(args), (3, 3 + DEGREE + 1))
+        R = R_theta(theta)
+        dR = dR_dtheta(theta, R)
+        g = Poly(a_m)
+        gp = g.deriv()
+        line_ts_rays = [newton.t_i_k(theta, R, g, points) for points in line_points]
+        result = np.concatenate((
+            dE_str_dthetai(theta, R, dR, g, gp, line_points, line_ts_rays),
+            dE_str_dam(theta, R, g, gp, line_points, line_ts_rays),
+            dE_dl
+        ), axis=1)
+        return result
+
+    result = opt.leastsq(
+        E_str_packed,
+        np.hstack([theta_0, a_m_0, l_m_0]),
+        args=(line_points,),
+        Dfun=Jac,
+        xtol=0.01
+        # diag=np.array(
+        #     [1.0] * 3 + [.01] * (DEGREE + 1) + [.001] * len(lines)
+        # )
+        # maxfev = 5
+    )
+
+    theta, a_m, l_m = unpack_args(result[0])
+    print theta
+    print a_m
+
+    R = R_theta(theta)
+    dR = dR_dtheta(theta, R)
+    g = Poly(a_m)
+    gp = g.deriv()
+    line_ts_rays = [newton.t_i_k(theta, R, g, pts) for pts in line_points]
+
+    print dE_str_dthetai(theta, R, dR, g, gp, line_points, line_ts_rays)
+    inc = 0.0001
+    for i in range(3):
+        delta = np.zeros(3)
+        delta[i] = inc
+        diff = E_str(theta + delta, g, l_m, line_points) - E_str(theta, g, l_m, line_points)
+        print diff / inc
+
+    import IPython
+    IPython.embed()
+
+    domain = R.inv().dot(100)
+    import matplotlib.pyplot as plt
+    plt.plot(domain, g(domain))
+    plt.show()
+
+    return result
+
 def go(argv):
     im = cv2.imread(argv[1], cv2.IMREAD_UNCHANGED)
-    out = dewarp(im)
-    cv2.imwrite('out.png', out)
+    lib.debug = True
+    lib.debug_prefix = 'dewarp/'
+    out = kim2014(im)
+    cv2.imwrite('dewarped.png', out)
 
 if __name__ == '__main__':
     go(sys.argv)

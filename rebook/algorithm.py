@@ -1,4 +1,5 @@
 import cv2
+# import itertools
 import math
 import numpy as np
 # import numpy.polynomial.polynomial as poly
@@ -145,9 +146,10 @@ def dominant_char_height(im):
     _, contours, [hierarchy] = cv2.findContours(im ^ 255, cv2.RETR_CCOMP,
                                                 cv2.CHAIN_APPROX_SIMPLE)
     letters = top_contours(contours, hierarchy)
-    char_heights = [cv2.boundingRect(c)[3] for c in letters]
+    boxes = [cv2.boundingRect(c) for c in letters]
+    heights = [h for x, y, w, h in boxes if w >= 5]
 
-    hist, _ = np.histogram(char_heights, 256, [0, 256])
+    hist, _ = np.histogram(heights, 256, [0, 256])
     # TODO: make depend on DPI.
     AH = np.argmax(hist[8:]) + 8  # minimum height 8
 
@@ -366,18 +368,23 @@ def safe_rotate(im, angle):
     debug_imwrite('rotated.png', result)
     return result
 
+@lib.timeit
 def fast_stroke_width(im):
-    # im should be black-on-white.
+    # im should be black-on-white. max stroke width 41.
     assert im.dtype == np.uint8 and is_bw(im)
 
     inv = im + 1
     inv_mask = im ^ 255
     dists = cv2.distanceTransform(inv, cv2.DIST_L2, 5)
+    stroke_radius = min(20, int(math.ceil(np.percentile(dists, 95))))
+    dists = 2 * dists + 1
     dists = dists.astype(np.uint8)
-    stroke_radius = int(math.ceil(np.percentile(dists, 95)))
     rect = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
     for idx in range(stroke_radius):
         dists = cv2.dilate(dists, rect)
         dists &= inv_mask
+
+    dists_mask = (dists >= 41).astype(np.uint8) - 1
+    dists &= dists_mask
 
     return dists

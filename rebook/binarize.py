@@ -4,48 +4,118 @@ import numpy.polynomial.polynomial as poly
 import sys
 from skimage.filters import threshold_sauvola, threshold_niblack
 
-# from algorithm import fast_stroke_width
-from lib import clip_u8, bool_to_u8, debug_imwrite
+from algorithm import fast_stroke_width
+import inpaint
+import lib
+from lib import normalize_u8, clip_u8, bool_to_u8, debug_imwrite
 
 cross33 = cv2.getStructuringElement(cv2.MORPH_CROSS, (3, 3))
+rect33 = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
 
-def hsl_gray(im):
+def hls_gray(im):
     assert len(im.shape) == 3
-    hls = cv2.cvtColor(im, cv2.COLOR_RGB2HLS)
-    _, l, s = cv2.split(hls)
-    return s, l
+    hls = cv2.cvtColor(im, cv2.COLOR_BGR2HLS)
+    _, l, _ = cv2.split(hls)
+    return l
+
+def CIELab_gray(im):
+    assert len(im.shape) == 3
+    Lab = cv2.cvtColor(im, cv2.COLOR_BGR2Lab)
+    L, _, _ = cv2.split(Lab)
+    return L
+
+@lib.timeit
+def pca_gray(im):
+    assert len(im.shape) == 3
+    Lab = cv2.cvtColor(im, cv2.COLOR_BGR2Lab)
+    im_1d = Lab.reshape(im.shape[0] * im.shape[1], 3).astype(np.float32)
+    im_1d -= np.mean(im_1d)
+    U, S, V = np.linalg.svd(im_1d, full_matrices=False)
+    coeffs = V[0]
+    if coeffs[0] < 0:
+        coeffs = -coeffs
+    result = normalize_u8(np.tensordot(Lab, coeffs, axes=1))
+    lib.debug_imwrite('pca.png', result)
+    return result
 
 def otsu(im):
     _, thresh = cv2.threshold(im, 0, 255, cv2.THRESH_BINARY | cv2.THRESH_OTSU)
     debug_imwrite('otsu.png', thresh)
     return thresh
 
+def teager(im):
+    im32 = im.astype(np.int32)
+    padded = np.pad(im32, (1, 1), 'edge')
+
+    return normalize_u8(3 * im32 ** 2 - padded[2:, 2:] * padded[:-2, :-2] / 2 \
+        - padded[2:, :-2] * padded[:-2, 2:] / 2 \
+        - padded[2:, 1:-1] * padded[:-2, 1:-1] \
+        - padded[1:-1, 2:] * padded[1:-1, :-2])
+
+@lib.timeit
 def ntirogiannis2014(im):
     im_h, _ = im.shape
-    IM = niblack(im, window_size=61, k=0.2)
+    IM = cv2.erode(niblack(im, window_size=61, k=0.2), rect33)
+    debug_imwrite('niblack.png', IM)
 
-    inpainted = inpaint.inpaint
-    cv2.imwrite('inpainted.png', inpainted)
+    inpainted, modified = inpaint.inpaint_ng14(im, -IM)
+    # TODO: get inpainted with avg as well
+    debug_imwrite('inpainted.png', inpainted)
+
+    bg = (inpainted & ~IM) | (modified & IM)
+    debug_imwrite('bg.png', bg)
 
     im_f = im.astype(float) + 1
-    inpainted_f = inpainted.astype(float) + 1
-    F = im_f / inpainted_f
-    F_min, F_max = F.min(), F.max()
-    N = clip_u8(255 / (F_max - F_min) * (F - F_min))
+    bg_f = bg.astype(float) + 1
+    F = im_f / bg_f
+    N = clip_u8(255 * (F - F.min()))
     debug_imwrite('N.png', N)
-    return otsu(im)
+    O = otsu(im)
 
-def sauvola(im, window_factor=200, k=0.2, thresh_factor=1.0):
-    thresh = threshold_sauvola(im, window_size=len(im) / window_factor * 2 + 1)
+    # TODO: use actual skeletonization system and CC filtering
+    strokes = fast_stroke_width(O)
+    debug_imwrite('strokes.png', normalize_u8(strokes.clip(0, 10)))
+    SW = int(round(strokes.sum() / np.count_nonzero(strokes)))
+    print 'SW =', SW
+
+    BG_count = np.count_nonzero(O)
+    FG_count = O.size - BG_count
+    O_16 = O.astype(np.int16)
+    O_inv = ~O
+    O_inv_16 = O_inv.astype(np.int16)
+
+    FG = (O_inv & N).astype(np.int16)
+    FG_avg = FG.sum() / FG_count
+    FG_std = (O_inv_16 & abs(FG - FG_avg)).sum() / float(FG_count)
+
+    BG = (O & N).astype(np.int16)
+    BG_avg = BG.sum() / BG_count
+    BG_std = (O_16 & abs(BG - BG_avg)).sum() / float(BG_count)
+
+    C = -50 * np.log10((FG_avg + FG_std) / (BG_avg - BG_std))
+    k = -0.2 - 0.1 * np.floor(C / 10)
+    print 'sauvola:', C, k
+    local = sauvola(N, window_size=2 * SW + 1, k=k)
+    horiz = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 1))
+    vert = cv2.getStructuringElement(cv2.MORPH_RECT, (1, 5))
+    O_eroded = cv2.erode(cv2.erode(O, horiz), vert)
+
+    # TODO: implement CC-based algorithm
+    # take everything that's FG in O_eroded and niblack
+    return O_eroded | local
+
+@lib.timeit
+def sauvola(im, window_size=61, k=0.2, thresh_factor=1.0):
+    thresh = threshold_sauvola(im, k=k, window_size=window_size)
     booleans = im > (thresh * thresh_factor)
     ints = booleans.astype(np.uint8) * 255
     return ints
 
+@lib.timeit
 def niblack(im, window_size=61, k=0.2):
     thresh = threshold_niblack(im, window_size=window_size, k=k)
     booleans = im > (thresh * 1.0)
-    ints = booleans.astype(np.uint8) * 255
-    return ints
+    return -booleans.astype(np.uint8)
 
 def kittler(im):
     h, g = np.histogram(im.ravel(), 256, [0, 256])
@@ -189,9 +259,13 @@ def nonzero_distances_row(im):
 def lu2010(im):
     im_h, im_w = im.shape
 
-    im_bg_row = polynomial_background_easy(im)  # TODO: implement full
-    im_bg = polynomial_background_easy(im_bg_row.T).T
-    im_bg = im_bg.clip(0.1, 255)
+    # im_bg_row = polynomial_background_easy(im)  # TODO: implement full
+    # im_bg = polynomial_background_easy(im_bg_row.T).T
+    # im_bg = im_bg.clip(0.1, 255)
+    IM = cv2.erode(niblack(im, window_size=61, k=0.2), rect33)
+    inpainted, modified = inpaint.inpaint_ng14(im, -IM)
+    im_bg = (inpainted & ~IM) | (modified & IM)
+    im_bg = im_bg.astype(np.float32).clip(0.1, 255)
     debug_imwrite('bg.png', im_bg)
 
     C = np.percentile(im, 30)
@@ -264,26 +338,31 @@ def su2013(im, gamma=0.25):
     # TODO: finish
     return C_a_bw
 
-def binarize(im, algorithm=adaptive_otsu, resize=1.0):
-    # clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(5, 5))
+def binarize(im, algorithm=adaptive_otsu, gray=CIELab_gray, resize=1.0):
     if (im + 1 < 2).all():  # black and white
         return im
     else:
         if resize < 0.99 or resize > 1.01:
             im = cv2.resize(im, (0, 0), None, resize, resize)
         if len(im.shape) > 2:
-            sat, lum = hsl_gray(im)
-            # sat, lum = clahe.apply(sat), clahe.apply(lum)
+            lum = gray(im)
             return algorithm(lum)  # & yan(l, T=35)
         else:
-            # img = clahe.apply(img)
-            # cv2.imwrite('clahe.png', img)
             return algorithm(im)
 
 def go(argv):
     im = cv2.imread(argv[1], cv2.IMREAD_UNCHANGED)
-    out = binarize(im, algorithm=su2013)
-    cv2.imwrite('out.png', out)
+    lib.debug = True
+    lib.debug_prefix = 'ng2014/'
+    cv2.imwrite('ng2014.png', binarize(im, algorithm=ntirogiannis2014))
+    # cv2.imwrite('ng2014_hls.png', binarize(im, algorithm=ntirogiannis2014,
+    #                                        gray=hls_gray))
+    cv2.imwrite('ng2014_pca.png', binarize(im, algorithm=ntirogiannis2014,
+                                           gray=pca_gray))
+    lib.debug_prefix = 'yan/'
+    cv2.imwrite('yan.png', binarize(im, algorithm=yan))
+    lib.debug_prefix = 'lu2010/'
+    cv2.imwrite('lu2010.png', binarize(im, algorithm=lu2010))
 
 if __name__ == '__main__':
     go(sys.argv)

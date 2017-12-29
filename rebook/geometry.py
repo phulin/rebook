@@ -5,6 +5,12 @@ from numpy.polynomial.polynomial import Polynomial as P
 
 BLUE = (255, 0, 0)
 
+def closest_root_to(poly_on, poly_root, p):
+    roots = poly_root.roots()
+    good_roots = roots[abs(roots.imag) < 1e-10].real.astype(np.float64)
+    good_roots_points = np.vstack([good_roots, poly_on(good_roots)]).T
+    return good_roots_points[abs(good_roots_points - p).sum(axis=1).argmin()]
+
 class Line(object):
     def __init__(self, m, b):
         self.m = m
@@ -15,7 +21,7 @@ class Line(object):
 
     @staticmethod
     def from_polynomial(p):
-        b, m = p.coeffs
+        b, m = p.coef
         return Line(m, b)
 
     @staticmethod
@@ -29,6 +35,18 @@ class Line(object):
         x1, y1 = p1
         m = (y1 - y0) / (x1 - x0)
         return Line.from_point_slope(p0, m)
+
+    @staticmethod
+    def homogeneous(A, B, C):
+        # Ax + By = C
+        return Line(-A / B, C / B)
+
+    @staticmethod
+    def fit(points):
+        if type(points) == list: points = np.array(points)
+
+        poly = P.fit(points[:, 0], points[:, 1], 1, domain=[-1, 1])
+        return Line.from_polynomial(poly)
 
     def intersect(self, other):
         x = (other.b - self.b) / (self.m - other.m)
@@ -63,29 +81,24 @@ class Line(object):
         return Line.from_point_slope(self.base() + offset, self.m)
 
     def closest_poly_intersect(self, poly, p):
-        roots = (poly - self.polynomial()).roots()
-        good_roots = roots[abs(roots.imag) < 1e-10].astype(np.float64)
-        good_roots_points = np.vstack([good_roots, poly(good_roots)]).T
-        return good_roots_points[abs(good_roots_points - p).sum(axis=1).argmin()]
+        return closest_root_to(poly, poly - self.polynomial(), p)
 
     def approx_line_poly_intersect(self, poly, approx):
         return self.closest_poly_intersect(poly, self.intersect(approx))
 
     def text_line_intersect(self, text_line):
-        approx = Line.from_points(text_line[0].base_point(), text_line[-1].base_point())
-        return self.approx_line_poly_intersect(text_line.model, approx)
+        return self.approx_line_poly_intersect(text_line.model, text_line.approx_line())
 
     @staticmethod
     def best_intersection(lines):
         bases = [l.base() for l in lines]
-        vecs = [l.vec() for l in lines]
+        vecs = [l.vector() for l in lines]
         K = len(lines)
         I = np.eye(2)
         R = K * I - sum((np.outer(v, v.T) for v in vecs))
         q = sum(bases) - sum((v * v.dot(a)) for v, a in zip(vecs, bases))
         R_inv = np.linalg.pinv(R)
         p = np.dot(R_inv, q)
-        print p
         return p
 
     def __str__(self):

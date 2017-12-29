@@ -2,6 +2,8 @@ import cv2
 import itertools
 import numpy as np
 
+from geometry import Line
+
 class Letter(object):
     def __init__(self, c, x, y, w, h):
         self.c = c
@@ -96,3 +98,6 @@ class TextLine(object):
 
     def last_base(self):
         return self.letters[-1].base_point()
+
+    def approx_line(self):
+        return Line.from_points(self[0].base_point(), self[-1].base_point())
