@@ -147,14 +147,6 @@ def estimate_vanishing(im, AH, lines):
     vy, = (p_left - p_right).roots()
     return np.array((p_left(vy), vy))
 
-    # p_left, p_right = vertical_lines
-    # full_line_mask = np.logical_and(
-    #     abs(p_left(left_bounds[:, 1]) - left_bounds[:, 0]) < AH / 2,
-    #     abs(p_right(right_bounds[:, 1]) - right_bounds[:, 0]) < AH / 2
-    # )
-
-    # return compress(lines, full_line_mask), vertical_lines
-
 def centroid(poly, line):
     first, last = line[0], line[-1]
     _, x0, _, w0, _ = first
@@ -208,7 +200,7 @@ def arc_length_points(xs, ys, n_points):
     total_arc = cumulative_arc[-1]
     print 'total D arc length:', total_arc
     s_domain = np.linspace(0, total_arc, n_points)
-    return D(s_domain)
+    return D(s_domain), total_arc
 
 N_POINTS = 200
 MU = 30
@@ -234,7 +226,7 @@ def estimate_directrix(lines, v, n_points_w):
     ])
 
     D_points = inv(A).dot(C_points)
-    D_points_arc = arc_length_points(D_points)
+    D_points_arc, _ = arc_length_points(D_points)
     C_points_arc = A.dot(D_points_arc)
 
     # plot_norm(np.vstack([domain, C0(domain)]).T, label='C0')
@@ -656,12 +648,13 @@ def E_str(theta, g, l_m, line_points):
     print 'norm:', norm(result)
     return result
 
-DEGREE = 5
+DEGREE = 7
 def unpack_args(args):
-    return np.split(np.array(args), (3, 3 + DEGREE))
+    # theta: 3, a_m: DEGREE, align: 2, l_m: len(lines)
+    return np.split(np.array(args), (3, 3 + DEGREE, 3 + DEGREE + 2))
 
 def E_str_packed(args, line_points, _):
-    theta, a_m, l_m = unpack_args(args)
+    theta, a_m, _, l_m = unpack_args(args)
     g = Poly(np.hstack([[0], a_m]))
     return E_str(theta, g, l_m, line_points)
 
@@ -732,7 +725,7 @@ def debug_plot_g(g, line_ts_surface):
     plt.show()
 
 def Jac_E_str(args, lines, dE_dl):
-    theta, a_m, l_m = unpack_args(args)
+    theta, a_m, _, l_m = unpack_args(args)
     R = R_theta(theta)
     dR = dR_dtheta(theta, R)
     g = Poly(np.hstack([[0], a_m]))
@@ -741,6 +734,7 @@ def Jac_E_str(args, lines, dE_dl):
     return np.concatenate((
         dE_str_dtheta(theta, R, dR, g, gp, lines, line_ts_surface),
         dE_str_dam(theta, R, g, gp, lines, line_ts_surface),
+        np.zeros((dE_dl.shape[0], 2)),
         dE_dl
     ), axis=1)
 
@@ -801,14 +795,17 @@ def make_mesh_2d(all_lines, O, R, g):
     box_XYZ = Crop.from_points(corners_XYZ).expand(0.01)
     print 'box_XYZ:', box_XYZ
 
-    box = Crop.from_points(corners)
-    n_points_w, n_points_h = box.w, box.h
-    # n_points_w, n_points_h = 140, 200
-
+    # 70th percentile line width a good guess
+    n_points_w = np.percentile(np.array([line.width() for line in all_lines]), 70)
     mesh_XYZ_x = np.linspace(box_XYZ.x0, box_XYZ.x1, 400)
     mesh_XYZ_z = g(mesh_XYZ_x)
     print 'Zs:', mesh_XYZ_z[0], mesh_XYZ_z[-1]
-    mesh_XYZ_x_arc = arc_length_points(mesh_XYZ_x, mesh_XYZ_z, n_points_w)[0]
+    mesh_XYZ_xz_arc, total_arc = arc_length_points(mesh_XYZ_x, mesh_XYZ_z,
+                                                   n_points_w)
+    mesh_XYZ_x_arc, _ = mesh_XYZ_xz_arc
+
+    # TODO: think more about estimation of aspect ratio for mesh
+    n_points_h = n_points_w * box_XYZ.h / total_arc
 
     mesh_XYZ_y = np.linspace(box_XYZ.y0, box_XYZ.y1, n_points_h)
     mesh_XYZ = make_mesh_XYZ(mesh_XYZ_x_arc, mesh_XYZ_y, g)
@@ -855,7 +852,7 @@ def kim2014(orig):
 
     result = lib.timeit(opt.least_squares)(
         fun=E_str_packed,
-        x0=np.hstack([theta_0, a_m_0, l_m_0]),
+        x0=np.hstack([theta_0, a_m_0, (0, 0), l_m_0]),
         jac=Jac_E_str,
         method='lm',
         args=(line_points, dE_dl),
@@ -863,7 +860,7 @@ def kim2014(orig):
         x_scale='jac',
     )
 
-    theta_big, a_m, l_m = unpack_args(result.x)
+    theta_big, a_m, _, l_m = unpack_args(result.x)
     theta = normalize_theta(theta_big)
     print '*** DONE ***'
     print 'theta:', theta, 'big:', theta_big
@@ -879,9 +876,22 @@ def kim2014(orig):
     # debug_jac(theta, R, g, l_m, line_points, line_ts_surface)
     # debug_plot_g(g, line_ts_surface)
 
-    mesh_2d = make_mesh_2d(all_lines, O, R, g)
+    mesh_2d = make_mesh_2d(all_lines, O, R, g)[:, ::-1, ::-1]
 
-    return correct_geometry(orig, mesh_2d.transpose(1, 2, 0))[::-1, ::-1]
+    mesh_2d_T = mesh_2d.transpose(1, 2, 0)  # shape (H, W, 2)
+    first_pass = correct_geometry(orig, mesh_2d_T)
+    im = binarize.binarize(first_pass, algorithm=binarize.ntirogiannis2014)
+    bw = im
+
+    # find nearest point in new image to original principal point
+    O_distance = norm(mesh_2d_T - O, axis=2)
+    O = np.unravel_index(O_distance.argmin(), O_distance.shape)
+
+    AH, all_lines, lines = get_AH_lines(im)
+
+    
+
+    return first_pass
 
 def go(argv):
     im = cv2.imread(argv[1], cv2.IMREAD_UNCHANGED)

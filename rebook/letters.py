@@ -120,4 +120,4 @@ class TextLine(object):
         return self.letters[-1].base_point()
 
     def approx_line(self):
-        return Line.from_points(self[0].base_point(), self[-1].base_point())
+        return Line.from_points(self.first_base(), self.last_base())
