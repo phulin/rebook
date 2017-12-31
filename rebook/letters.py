@@ -24,6 +24,12 @@ class Letter(object):
     def right(self):
         return self.x + self.w
 
+    def top(self):
+        return self.y
+
+    def bottom(self):
+        return self.y + self.h
+
     def left_mid(self):
         return np.array((self.x, self.y + self.h / 2.0))
 
@@ -35,6 +41,14 @@ class Letter(object):
 
     def right_bot(self):
         return np.array((self.x + self.w, self.y + self.h))
+
+    def corners(self):
+        return np.array((
+            (self.x, self.y),
+            (self.x, self.y + self.h),
+            (self.x + self.w, self.y),
+            (self.x + self.w, self.y + self.h)
+        ))
 
     def base_point(self):
         return np.array((self.x + self.w / 2.0, self.y + self.h))
@@ -72,6 +86,9 @@ class TextLine(object):
         assert self.model is not None
         return self.model(value)
 
+    def __add__(self, other):
+        return self.letters + other.letters
+
     def copy(self):
         return TextLine(self.letters[:], self.model)
 
@@ -92,6 +109,9 @@ class TextLine(object):
 
     def right(self):
         return self.letters[-1].right()
+
+    def width(self):
+        return self.right() - self.left()
 
     def first_base(self):
         return self.letters[0].base_point()

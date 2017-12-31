@@ -11,66 +11,69 @@ cimport cython
 
 from numpy.polynomial.polynomial import Polynomial as Poly
 
-def t_i_k(np.ndarray[np.float64_t, ndim=1] theta,
-          np.ndarray[np.float64_t, ndim=2] R,
+def t_i_k(np.ndarray[np.float64_t, ndim=2] R,
           g,
-          np.ndarray[np.float64_t, ndim=2] points):
+          np.ndarray[np.float64_t, ndim=2] points,
+          double t0):
 
-    cdef np.ndarray[np.float64_t, ndim=1] ts, g_ray_coef, g_rayp_coef, ray, Of, ROf
+    cdef np.ndarray[np.float64_t, ndim=1] ts, g_coef, gp_coef, ray, Of, ROf
     cdef np.ndarray[np.float64_t, ndim=2] rays
 
     rays = R.dot(points)
     cdef double f = 3270.5
     Of = np.array([0, 0, f], dtype=np.float64)
-    ROfx, ROfy, ROfz = R.dot(Of)
-    ts = f / rays[2]
+    ROf = R.dot(Of)
+    cdef double ROf_x, ROf_y, ROf_z, Rp_x, Rp_y, Rp_z
+    ROf_x, ROf_y, ROf_z = ROf
+    ts = np.full(points.shape[1], t0)
 
     cdef int n = ts.shape[0]
     cdef int i, j, k, m
-    cdef double t0, t, y, yp, u
+    cdef double t, y, yp, u, target, gp
 
     m = g.degree()
     assert m <= 9
 
+    # defer interior scaling until computation
+    g_coef = g.coef.copy()
+    g_coef[0] = 0
+    gp_coef = g_coef[1:].copy()
+    for k in range(1, m - 1):
+        gp_coef[k] *= k + 1
+    # print 'g :', g_coef
+    # print 'g\':', gp_coef
+
     for i in range(n):
-        Rpx, Rpy, Rpz = rays[:, i]
+        Rp_x, Rp_y, Rp_z = rays[:, i]
 
         # solve: g([R(pt - Of)]_x) = [R(pt - Of)]_z
-        #  g(ray[0] * t - ROfx) = ray[2] * t - ROfz
-        #   h(t) = g(ray[0] * t - ROfx) - (ray[2] * t - ROfz)
-        #   h'(t) = g'(ray[0] * t - ROfx) * ray[0] - ray[2]
-
-        # defer interior scaling until computation
-        g_ray_coef = g.coef.copy()
-        g_rayp_coef = g_ray_coef[1:].copy()
-        for k in range(1, m - 1):
-            g_rayp_coef[k] *= m + 1
-        # print g_ray_coef, g_rayp_coef
+        #  g(ray[0] * t - ROf_x) = ray[2] * t - ROf_z
+        #   h(t)  = g(Rp_x * t - ROf_x) - (Rp_z * t - ROf_z)
+        #   h'(t) = g'(Rp_x * t - ROf_x) * Rp_x - Rp_z
 
         t = ts[i]
         for j in range(100):
             y = 0
-            u = Rpx * t - ROfx
+            u = Rp_x * t - ROf_x
             for k in range(m, -1, -1):
                 y *= u
-                y += g_ray_coef[k]
-            y -= Rpz * t - ROfz
-            if abs(y) < 1e-7: break
+                y += g_coef[k]
+            target = Rp_z * t - ROf_z
+            y -= target
+            if abs(y) < 1e-5: break
 
-            # (g(tRpx - ROfx) - (tRpz - ROfz))' = g'(tRpx - ROfx) * Rpx - Rpz
-            yp = 0
+            gp = 0
             for k in range(m - 1, -1, -1):
-                yp *= u
-                yp += g_rayp_coef[k]
-            yp *= Rpx
-            yp -= Rpz
+                gp *= u
+                gp += gp_coef[k]
+            yp = Rp_x * gp - Rp_z
 
             t -= y / yp
 
-        if j >= 99: print "warning iterations exceeded", abs(y)
-        # print j
-        # print t
+        # if j >= 99:
+        #     print "warning iterations exceeded", y + target, target
+
         ts[i] = t
 
     # print 'final ts:', ts
-    return np.array(ts), rays
+    return ts, ((ts * rays).T - ROf).T

@@ -2,7 +2,6 @@ import cv2
 import numpy as np
 import numpy.polynomial.polynomial as poly
 import sys
-from skimage.filters import threshold_sauvola, threshold_niblack
 
 from algorithm import fast_stroke_width
 import inpaint
@@ -104,18 +103,50 @@ def ntirogiannis2014(im):
     # take everything that's FG in O_eroded and niblack
     return O_eroded | local
 
-@lib.timeit
-def sauvola(im, window_size=61, k=0.2, thresh_factor=1.0):
-    thresh = threshold_sauvola(im, k=k, window_size=window_size)
-    booleans = im > (thresh * thresh_factor)
-    ints = booleans.astype(np.uint8) * 255
-    return ints
+# @lib.timeit
+# def sauvola(im, window_size=61, k=0.2, thresh_factor=1.0):
+#     thresh = threshold_sauvola(im, k=k, window_size=window_size)
+#     booleans = im > (thresh * thresh_factor)
+#     ints = booleans.astype(np.uint8) * 255
+#     return ints
+# 
+# @lib.timeit
+# def niblack(im, window_size=61, k=0.2):
+#     thresh = threshold_niblack(im, window_size=window_size, k=k)
+#     booleans = im > (thresh * 1.0)
+#     return -booleans.astype(np.uint8)
+
+def mean_std(im, W):
+    s = W / 2
+    N = W * W
+
+    padded = np.pad(im, (s, s), 'reflect')
+    sum1, sum2 = cv2.integral2(padded, sdepth=cv2.CV_32F)
+
+    S1 = sum1[W:, W:] - sum1[W:, :-W] - sum1[:-W, W:] + sum1[:-W, :-W]
+    S2 = sum2[W:, W:] - sum2[W:, :-W] - sum2[:-W, W:] + sum2[:-W, :-W]
+
+    means = S1 / N
+
+    variances = S2 / N - means * means
+    stds = np.sqrt(variances.clip(0, None))
+
+    return means, stds
 
 @lib.timeit
 def niblack(im, window_size=61, k=0.2):
-    thresh = threshold_niblack(im, window_size=window_size, k=k)
-    booleans = im > (thresh * 1.0)
-    return -booleans.astype(np.uint8)
+    means, stds = mean_std(im, window_size)
+    thresh = means + k * stds
+
+    return -(im > thresh).astype(np.uint8)
+
+@lib.timeit
+def sauvola(im, window_size=61, k=0.2):
+    assert im.dtype == np.uint8
+    means, stds = mean_std(im, window_size)
+    thresh = means * (1 + k * ((stds / 127) - 1))
+
+    return -(im > thresh).astype(np.uint8)
 
 def kittler(im):
     h, g = np.histogram(im.ravel(), 256, [0, 256])
@@ -316,7 +347,7 @@ def adaptive_otsu(im):
     bg_float = background.astype(np.float64)
     debug_imwrite('bg.png', background)
     C = np.percentile(im, 30)
-    normalized = clip_u8(C / bg_float * im)
+    normalized = clip_u8(C / (bg_float + 1e-10) * im)
     debug_imwrite('norm.png', normalized)
     return otsu(normalized)
 

@@ -112,6 +112,20 @@ class Crop(object):
         self.x0, self.y0 = x0, y0
         self.x1, self.y1 = x1, y1
 
+    @staticmethod
+    def from_points(points):
+        return Crop(points[0].min(), points[1].min(),
+                    points[0].max(), points[1].max())
+
+    @staticmethod
+    def from_line(line):
+        return Crop(
+            min([letter.x for letter in line]),
+            min([letter.x for letter in line]),
+            max([letter.right() for letter in line]),
+            max([letter.bottom() for letter in line])
+        )
+
     @property
     def w(self):
         return self.x1 - self.x0
@@ -119,6 +133,14 @@ class Crop(object):
     @property
     def h(self):
         return self.y1 - self.y0
+
+    def corners(self):
+        return [
+            (self.x0, self.y0),
+            (self.x0, self.y1),
+            (self.x1, self.y0),
+            (self.x1, self.y1),
+        ]
 
     def nonempty(self):
         return self.x0 <= self.x1 and self.y0 <= self.y1
@@ -164,6 +186,14 @@ class Crop(object):
     @staticmethod
     def from_rect(x, y, w, h):
         return Crop(x, y, x + w, y + h)
+
+    def expand(self, factor):
+        return Crop(
+            self.x0 - self.w * factor,
+            self.y0 - self.h * factor,
+            self.x1 + self.w * factor,
+            self.y1 + self.h * factor
+        )
 
     def draw(self, im, color=BLUE, thickness=2):
         cv2.rectangle(im, (int(self.x0), int(self.y0)), (int(self.x1), int(self.y1)),
