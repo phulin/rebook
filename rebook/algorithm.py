@@ -184,7 +184,7 @@ def word_contours(AH, im):
     return word_boxes
 
 def valid_letter(AH, c, x, y, w, h):
-    return h < 3 * AH and w < 3 * AH and h > AH / 2 and w > AH / 3
+    return h < 3 * AH and w < 5 * AH and h > AH / 2 and w > AH / 3
 
 def letter_contours(AH, im):
     _, contours, [hierarchy] = cv2.findContours(im ^ 255, cv2.RETR_CCOMP,

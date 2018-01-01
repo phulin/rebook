@@ -16,7 +16,7 @@ from skimage.measure import ransac
 import algorithm
 import binarize
 import collate
-from geometry import Crop, Line
+from geometry import Crop, Line, Line3D
 from letters import TextLine
 import lib
 import newton
@@ -95,7 +95,7 @@ def merge_lines(AH, lines):
 
 @lib.timeit
 def remove_outliers(im, AH, lines):
-    # lines_debug = cv2.cvtColor(im, cv2.COLOR_GRAY2RGB)
+    debug = cv2.cvtColor(im, cv2.COLOR_GRAY2RGB)
 
     result = []
     for l in lines:
@@ -105,14 +105,18 @@ def remove_outliers(im, AH, lines):
         model, inliers = ransac(points, PolyModel5, 10, AH / 10.0)
         poly = model.params
         l.model = poly
-        # trace_baseline(lines_debug, l, BLUE)
-        # for p, is_in in zip(points, inliers):
-        #     color = GREEN if is_in else RED
-        #     cv2.circle(lines_debug, tuple(p.astype(int)), 4, color, -1)
+        # trace_baseline(debug, l, BLUE)
+        for p, is_in in zip(points, inliers):
+            color = GREEN if is_in else RED
+            cv2.circle(debug, tuple(p.astype(int)), 4, color, -1)
 
         result.append(TextLine(compress(l, inliers), poly))
 
-    # lib.debug_imwrite('lines.png', lines_debug)
+    for l in result:
+        cv2.circle(debug, tuple(l[0].left_mid().astype(int)), 6, BLUE, -1)
+        cv2.circle(debug, tuple(l[-1].right_mid().astype(int)), 6, BLUE, -1)
+
+    lib.debug_imwrite('lines.png', debug)
     return merge_lines(AH, result)
 
 # x = my + b model weighted t
@@ -124,14 +128,14 @@ class LinearXModel(object):
     def residuals(self, data):
         return abs(self.params(data[:, 1]) - data[:, 0])
 
-def estimate_vanishing(im, AH, lines):
-    im_h, im_w = im.shape
+def side_lines(AH, lines):
+    im_h, _ = bw.shape
 
     left_bounds = np.array([l[0].left_mid() for l in lines])
     right_bounds = np.array([l[-1].right_mid() for l in lines])
 
     vertical_lines = []
-    debug = cv2.cvtColor(im, cv2.COLOR_GRAY2BGR)
+    debug = cv2.cvtColor(bw, cv2.COLOR_GRAY2BGR)
     for coords in [left_bounds, right_bounds]:
         model, inliers = ransac(coords, LinearXModel, 3, AH / 10.0)
         vertical_lines.append(model.params)
@@ -143,7 +147,10 @@ def estimate_vanishing(im, AH, lines):
         cv2.line(debug, (int(p(0)), 0), (int(p(im_h)), im_h), (255, 0, 0), 2)
     lib.debug_imwrite('vertical.png', debug)
 
-    p_left, p_right = vertical_lines
+    return vertical_lines
+
+def estimate_vanishing(AH, lines):
+    p_left, p_right = side_lines(AH, lines)
     vy, = (p_left - p_right).roots()
     return np.array((p_left(vy), vy))
 
@@ -545,7 +552,7 @@ def dewarp(orig):
 
     AH, all_lines, lines = get_AH_lines(im)
 
-    v0 = estimate_vanishing(im, AH, lines)
+    v0 = estimate_vanishing(AH, lines)
 
     O = np.array((im_w / 2.0, im_h / 2.0))
     v = v0
@@ -645,7 +652,6 @@ def E_str(theta, g, l_m, line_points):
         residuals.append(Ys - l_k)
 
     result = np.concatenate(residuals)
-    print 'norm:', norm(result)
     return result
 
 DEGREE = 9
@@ -653,10 +659,15 @@ def unpack_args(args):
     # theta: 3; a_m: DEGREE; align: 2; l_m: len(lines)
     return np.split(np.array(args), (3, 3 + DEGREE, 3 + DEGREE + 2))
 
-def E_str_packed(args, mid_points, line_points, dE_str_dl):
+def E_str_packed(args, mid_points, line_points):
     theta, a_m, _, l_m = unpack_args(args)
     g = Poly(np.hstack([[0], a_m]))
     return E_str(theta, g, l_m, line_points)
+
+def E_0(*args):
+    result = E_str_packed(*args)
+    print 'norm:', norm(result)
+    return result
 
 def dR_dthetai(theta, R, i):
     T = norm(theta)
@@ -721,7 +732,7 @@ def dE_str_dam(theta, R, g, gp, all_points, all_ts, all_surface):
     return (R2.dot(all_points) * dt).T
 
 def dE_str_dl_k(line_points):
-    blocks = [np.full((len(l), 1), -1) for l in line_points]
+    blocks = [np.full((l.shape[-1], 1), -1) for l in line_points]
     return scipy.linalg.block_diag(*blocks)
 
 def debug_plot_g(g, line_ts_surface):
@@ -734,7 +745,7 @@ def debug_plot_g(g, line_ts_surface):
     # plt.plot(domain, g(domain))
     plt.show()
 
-def Jac_E_str(args, mid_points, line_points, dE_str_dl):
+def Jac_E_str(args, mid_points, line_points):
     theta, a_m, _, l_m = unpack_args(args)
     R = R_theta(theta)
     dR = dR_dtheta(theta, R)
@@ -750,8 +761,8 @@ def Jac_E_str(args, mid_points, line_points, dE_str_dl):
     return np.concatenate((
         dE_str_dtheta(theta, R, dR, g, gp, all_points, all_ts, all_surface),
         dE_str_dam(theta, R, g, gp, all_points, all_ts, all_surface),
-        np.zeros((dE_str_dl.shape[0], 2)),
-        dE_str_dl
+        np.zeros((all_ts.shape[0], 2)),
+        dE_str_dl_k(line_points),
     ), axis=1)
 
 def debug_jac(theta, R, g, l_m, line_points, line_ts_surface):
@@ -786,9 +797,10 @@ def E_align(theta, g, align, mid_points):
     _, (Xs, _, _) = newton.t_i_k(R, g, all_points, T0)
     Xs.shape = (2, -1)  # 2 x N
 
+    # print (Xs - align[:, newaxis]).flatten().astype(int)
     return (Xs - align[:, newaxis]).flatten()
 
-def E_align_packed(args, mid_points, line_points, dE_str_dl):
+def E_align_packed(args, mid_points, line_points):
     theta, a_m, align, l_m = unpack_args(args)
     g = Poly(np.hstack([[0], a_m]))
     return E_align(theta, g, align, mid_points)
@@ -813,33 +825,37 @@ def dE_align_dtheta(theta, R, dR, g, gp, all_points, all_ts, all_surface):
 
     return term1.T + term2.T + term3
 
-def Jac_E_align(args, mid_points, line_points, dE_str_dl):
+def Jac_E_align(args, mid_points, line_points):
     theta, a_m, _, _ = unpack_args(args)
     R = R_theta(theta)
     dR = dR_dtheta(theta, R)
     g = Poly(np.hstack([[0], a_m]))
     gp = g.deriv()
-    line_ts_surface = [newton.t_i_k(R, g, points, T0) for points in line_points]
 
-    N = len(line_points)  # number of lines; 2N residuals
+    N = mid_points.shape[-1]  # number of lines; 2N residuals
 
-    all_points = np.concatenate(line_points, axis=1)
-    all_ts = np.concatenate([ts for ts, _ in line_ts_surface])
-    all_surface = np.concatenate([surface for _, surface in line_ts_surface],
-                                 axis=1)
+    all_points = mid_points.reshape(3, -1)
+    assert all_points.shape == (3, 2 * N)
+    all_ts, all_surface = newton.t_i_k(R, g, all_points, T0)
 
-    return np.concatenate([
+    return np.concatenate((
         dE_align_dtheta(theta, R, dR, g, gp, all_points, all_ts, all_surface),
         dE_align_dam(theta, R, g, gp, all_points, all_ts, all_surface),
         np.tile([[-1, 0], [0, -1]], (N, 1)),
-        np.zeros((2 * N, N))
-    ], axis=1)
+        np.zeros((2 * N, len(line_points)))
+    ), axis=1)
 
+LAMBDA_2 = 0.3
 def E_2(*args):
-    return np.concatenate([E_str_packed(*args), E_align_packed(*args)])
+    E_str_out = E_str_packed(*args)
+    E_align_out = LAMBDA_2 * E_align_packed(*args)
+    result = np.concatenate([E_str_out, E_align_out])
+    print 'norm:', norm(result), '=', norm(E_str_out), '+', norm(E_align_out)
+    return result
 
 def Jac_E_2(*args):
-    return np.concatenate([Jac_E_str(*args), Jac_E_align(*args)])
+    return np.concatenate([Jac_E_str(*args),
+                           LAMBDA_2 * Jac_E_align(*args)])
 
 def make_mesh_XYZ(xs, ys, g):
     return np.array([
@@ -894,9 +910,9 @@ def make_mesh_2d(all_lines, O, R, g):
 
     debug_print_points('mesh1.png', mesh_2d, step=20)
 
-    return mesh_2d
+    return mesh_2d[:, ::-1, ::-1].transpose(1, 2, 0)
 
-def initial_args(lines, O, theta_0=np.zeros(3)):
+def initial_args(lines, O, theta_0=(1e-7, 1e-7, 1e-7)):
     # flat surface as initial guess.
     # NB: coeff 0 forced to 0 here. not included in opt.
     a_m_0 = [0] * DEGREE
@@ -914,27 +930,28 @@ def initial_args(lines, O, theta_0=np.zeros(3)):
         [line[0].left_mid() for line in lines],
         [line[-1].right_mid() for line in lines],
     ]).transpose(2, 0, 1)
+    widths = abs(mid_points_2d[0, 1] - mid_points_2d[0, 0])
+    mid_points_2d = mid_points_2d[:, :, widths >= 0.9 * np.median(widths)]
     assert mid_points_2d.shape[0:2] == (2, 2)
 
     # axes (coord 3, LR 2, line N)
     mid_points = image_to_focal_plane(mid_points_2d, O)
     assert mid_points.shape[0:2] == (3, 2)
 
-    dE_str_dl = dE_str_dl_k(lines)
-
     line_ts_surface = [newton.t_i_k(R_0, g_0, points, T0) for points in line_points]
     l_m_0 = [Ys.mean() for ts, (_, Ys, _) in line_ts_surface]
 
     _, (Xs, _, _) = newton.t_i_k(R_0, g_0, mid_points.reshape(3, -1), T0)
     align_0 = Xs.reshape(2, -1).mean(axis=1)  # to LR, N
-    assert align_0.shape == (2,)
+    print 'align_0:', align_0
 
     return (np.hstack([theta_0, a_m_0, align_0, l_m_0]),
-            (mid_points, line_points, dE_str_dl))
+            (mid_points, line_points))
 
 @lib.timeit
 def kim2014(orig):
-    lib.debug = True
+    lib.debug_prefix = 'dewarp/'
+
     im = binarize.binarize(orig, algorithm=binarize.ntirogiannis2014)
     global bw
     bw = im
@@ -945,73 +962,92 @@ def kim2014(orig):
     AH, all_lines, lines = get_AH_lines(im)
 
     # Estimate viewpoint from vanishing point
-    vx, vy = estimate_vanishing(im, AH, lines) - O
+    vx, vy = estimate_vanishing(AH, lines) - O
 
     theta_0 = [atan2(-vy, f) - pi / 2, 0, 0]
-    # theta_0 = [-0.3, 0, 0]
     print 'theta_0:', theta_0
 
-    args_0, (mid_points, line_points, dE_str_dl) = \
+    args_0, (mid_points, line_points) = \
         initial_args(lines, O, theta_0=theta_0)
 
     result = lib.timeit(opt.least_squares)(
-        fun=E_str_packed,
+        fun=E_0,
         x0=args_0,
         jac=Jac_E_str,
         method='lm',
-        args=(mid_points, line_points, dE_str_dl),
+        args=(mid_points, line_points),
         ftol=1e-2,
         x_scale='jac',
     )
-
-    theta_big, a_m, _, l_m = unpack_args(result.x)
-    theta = normalize_theta(theta_big)
+    theta, a_m, _, l_m = unpack_args(result.x)
     print '*** DONE ***'
-    print 'theta:', theta, 'big:', theta_big
+    print 'final norm:', norm(result.fun)
+    print 'theta:', theta
     print 'a_m:', np.hstack([[0], a_m])
     print 'l_m:', l_m
 
     R = R_theta(theta)
     g = Poly(np.hstack([[0], a_m]))
 
-    print 'final norm:', norm(result.fun)
-
     # line_ts_surface = [newton.t_i_k(R, g, points, T0) for points in line_points]
     # debug_jac(theta, R, g, l_m, line_points, line_ts_surface)
     # debug_plot_g(g, line_ts_surface)
 
-    mesh_2d = make_mesh_2d(all_lines, O, R, g)[:, ::-1, ::-1]
+    if lib.debug:
+        mesh_2d = make_mesh_2d(all_lines, O, R, g)
+        correct_geometry(orig, mesh_2d)
 
-    mesh_2d_T = mesh_2d.transpose(1, 2, 0)  # shape (H, W, 2)
-    first_pass = correct_geometry(orig, mesh_2d_T)
-    im = binarize.binarize(first_pass, algorithm=binarize.ntirogiannis2014)
-    bw = im
+    lib.debug_prefix = 'dewarp2/'
 
-    # find nearest point in new image to original principal point
-    O_distance = norm(mesh_2d_T - O, axis=2)
-    O = np.unravel_index(O_distance.argmin(), O_distance.shape)
+    # im = binarize.binarize(first_pass, algorithm=binarize.ntirogiannis2014)
+    # bw = im
 
-    AH, all_lines, lines = get_AH_lines(im)
+    # # find nearest point in new image to original principal point
+    # O_distance = norm(mesh_2d - O, axis=2)
+    # O = np.array(np.unravel_index(O_distance.argmin(), O_distance.shape))
 
-    args_0, (mid_points, line_points, dE_str_dl) = initial_args(lines, O)
+    # AH, all_lines, lines = get_AH_lines(im)
+
+    # args_0, (mid_points, line_points) = initial_args(lines, O)
+    _, (Xs, _, _) = newton.t_i_k(R, g, mid_points.reshape(3, -1), T0)
+    align = Xs.reshape(2, -1).mean(axis=1)  # to LR, N
 
     # TODO: use E_1 if not aligned
     result = lib.timeit(opt.least_squares)(
         fun=E_2,
-        x0=args_0,
+        x0=np.concatenate([theta, a_m, align, l_m]),
         jac=Jac_E_2,
         method='lm',
-        args=(mid_points, line_points, dE_str_dl),
-        ftol=1e-2,
+        args=(mid_points, line_points),
+        ftol=1e-3,
         x_scale='jac',
     )
+    theta, a_m, align, l_m = unpack_args(result.x)
+    print '*** DONE ***'
+    print 'final norm:', norm(result.fun)
+    print 'theta:', theta
+    print 'a_m:', np.hstack([[0], a_m])
+    print 'l_m:', l_m
+    print 'alignment:', (result.fun[-2 * mid_points.shape[-1]:] / LAMBDA_2).astype(int)
 
-    return first_pass
+    R = R_theta(theta)
+    g = Poly(np.hstack([[0], a_m]))
+
+    debug = cv2.cvtColor(bw, cv2.COLOR_GRAY2BGR)
+    for idx, X in enumerate(align):
+        line = Line3D.from_point_vec((X, 0, g(X)), (0, 1, 0))
+        line.transform(inv(R)).offset(Of).project(FOCAL_PLANE_Z)\
+            .offset(O).draw(debug, color=BLUE if idx == 0 else GREEN)
+    lib.debug_imwrite('align.png', debug)
+
+    mesh_2d = make_mesh_2d(all_lines, O, R, g)
+    second_pass = correct_geometry(orig, mesh_2d)
+
+    return second_pass
 
 def go(argv):
     im = cv2.imread(argv[1], cv2.IMREAD_UNCHANGED)
     lib.debug = True
-    lib.debug_prefix = 'dewarp/'
     out = kim2014(im)
     cv2.imwrite('dewarped.png', out)
 

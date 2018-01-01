@@ -107,6 +107,41 @@ class Line(object):
     def __repr__(self):
         return 'Line({}, {})'.format(self.m, self.b)
 
+class Line3D(object):
+    # p0, p1: points on line
+    def __init__(self, p0, p1):
+        self.p0, self.p1 = p0, p1
+
+    @staticmethod
+    def from_coords(x0, y0, z0, x1, y1, z1):
+        return Line3D(np.array((x0, y0, z0)), np.array((x1, y1, z1)))
+
+    @staticmethod
+    def from_point_vec(p, v):
+        p = np.atleast_1d(p)
+        v = np.atleast_1d(v)
+        return Line3D(p, p + v)
+
+    @property
+    def vec(self):
+        return self.p1 - self.p0
+
+    def transform(self, A):
+        return Line3D(A.dot(self.p0), A.dot(self.p1))
+
+    def offset(self, v):
+        return Line3D(self.p0 + v, self.p1 + v)
+
+    def project(self, z):
+        return Line.from_points(self.p0[0:2] * (z / self.p0[2]),
+                                self.p1[0:2] * (z / self.p1[2]))
+
+    def __str__(self):
+        return 'Line[({:.2f}, {:.2f}, {:.2f}) => ({:.2f}, {:.2f}, {:.2f})]'.format(
+            self.p0[0], self.p0[1], self.p0[2],
+            self.p1[0], self.p1[1], self.p1[2]
+        )
+
 class Crop(object):
     def __init__(self, x0, y0, x1, y1):
         self.x0, self.y0 = x0, y0
