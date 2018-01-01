@@ -81,7 +81,7 @@ def merge_lines(AH, lines):
             points = np.array([letter.base_point() for letter in out_lines[-1]])
             new_model, inliers = ransac(points, PolyModel5, 10, AH / 15.0)
             out_lines[-1].compress(inliers)
-            out_lines[-1].model = new_model
+            out_lines[-1].model = new_model.params
         else:
             out_lines.append(line)
 
@@ -609,7 +609,7 @@ def image_to_focal_plane(points, O):
     assert points.shape[0] == 2
     return np.concatenate((
         points - O[:, newaxis],
-        [[FOCAL_PLANE_Z] * points.shape[1]]
+        np.full(points.shape[1:], FOCAL_PLANE_Z)[newaxis, ...]
     )).astype(np.float64)
 
 # points: 3 x ... array of points
@@ -648,19 +648,19 @@ def E_str(theta, g, l_m, line_points):
     print 'norm:', norm(result)
     return result
 
-DEGREE = 7
+DEGREE = 9
 def unpack_args(args):
-    # theta: 3, a_m: DEGREE, align: 2, l_m: len(lines)
+    # theta: 3; a_m: DEGREE; align: 2; l_m: len(lines)
     return np.split(np.array(args), (3, 3 + DEGREE, 3 + DEGREE + 2))
 
-def E_str_packed(args, line_points, _):
+def E_str_packed(args, mid_points, line_points, dE_str_dl):
     theta, a_m, _, l_m = unpack_args(args)
     g = Poly(np.hstack([[0], a_m]))
     return E_str(theta, g, l_m, line_points)
 
 def dR_dthetai(theta, R, i):
     T = norm(theta)
-    inc = T / 4096
+    inc = T / 8192
     delta = np.zeros(3)
     delta[i] = inc
     Rp = R_theta(theta + delta)
@@ -670,48 +670,58 @@ def dR_dthetai(theta, R, i):
 def dR_dtheta(theta, R):
     return np.array([dR_dthetai(theta, R, i) for i in range(3)])
 
-def dE_str_dtheta(theta, R, dR, g, gp, line_points, line_ts_surface):
-    ROfx, _, _ = R.dot(Of)
+def dti_dtheta(theta, R, dR, g, gp, all_points, all_ts, all_surface):
+    R1, _, R3 = R
+    dR1, dR3 = dR[:, 0], dR[:, 2]
+    dR13, dR33 = dR[:, 0, 2], dR[:, 2, 2]
+
+    Xs, _, _ = all_surface
+
+    # dR: 3derivs x r__; dR[:, 0]: 3derivs x r1_; points: 3comps x Npoints
+    # A: 3 x Npoints
+    A1 = dR1.dot(all_points) * all_ts
+    A2 = -dR13 * f
+    A = A1 + A2[:, newaxis]
+    B = R1.dot(all_points)
+    C1 = dR3.dot(all_points) * all_ts  # 3derivs x Npoints
+    C2 = -dR33 * f
+    C = C1 + C2[:, newaxis]
+    D = R3.dot(all_points)
+    slopes = gp(Xs)
+    return -(C - slopes * A) / (D - slopes * B)
+
+def dE_str_dtheta(theta, R, dR, g, gp, all_points, all_ts, all_surface):
+    _, R2, _ = R
+    dR2 = dR[:, 1]
+    dR23 = dR[:, 1, 2]
+
+    dt = dti_dtheta(theta, R, dR, g, gp, all_points, all_ts, all_surface)
+
+    term1 = dR2.dot(all_points) * all_ts
+    term2 = R2.dot(all_points) * dt
+    term3 = -dR23 * f
+
+    return term1.T + term2.T + term3
+
+def dti_dam(theta, R, g, gp, all_points, all_ts, all_surface):
     R1, R2, R3 = R
-    dR1, dR2, dR3 = dR[:, 0], dR[:, 1], dR[:, 2]
-    dR13, dR23, dR33 = dR[:, 0, 2], dR[:, 1, 2], dR[:, 2, 2]
 
-    partials = []
-    for points, (ts, (Xs, _, _)) in zip(line_points, line_ts_surface):
+    Xs, _, _ = all_surface
 
-        # dR: 3derivs x r__; dR[:, 0]: 3derivs x r1_; points: 3comps x Npoints
-        # A: 3 x Npoints
-        A1 = dR1.dot(points) * ts
-        A2 = -dR13 * f
-        A = A1 + A2[:, newaxis]
-        B = R1.dot(points)
-        C1 = dR3.dot(points) * ts  # 3derivs x Npoints
-        C2 = -dR33 * f
-        C = C1 + C2[:, newaxis]
-        D = R3.dot(points)
-        slopes = gp(Xs)
-        dt_dthetai = -(C - slopes * A) / (D - slopes * B)  # N x 3
+    powers = np.vstack([Xs ** m for m in range(1, DEGREE + 1)])
+    denom = R3.dot(all_points) - gp(Xs) * R1.dot(all_points)
 
-        term1 = dR2.dot(points) * ts       # 3 x N
-        term2 = R2.dot(points) * dt_dthetai  # 3 x N
-        term3 = -dR23 * f                   # 3
-        partials.append(term1.T + term2.T + term3)  # N x 3
+    return powers / denom
 
-    return np.concatenate(partials)
-
-def dE_str_dam(theta, R, g, gp, line_points, line_ts_surface):
+def dE_str_dam(theta, R, g, gp, all_points, all_ts, all_surface):
     R1, R2, R3 = R
-    partials = []
-    for points, (ts, (Xs, _, _)) in zip(line_points, line_ts_surface):
-        powers = np.vstack([Xs ** m for m in range(1, DEGREE + 1)])  # D x N
-        denom = R3.dot(points) - gp(Xs) * R1.dot(points)              # N
-        dt_dam = powers / denom                                       # D x N
-        partials.append((R2.dot(points) * dt_dam).T)                  # D x N
 
-    return np.concatenate(partials, axis=0)
+    dt = dti_dam(theta, R, g, gp, all_points, all_ts, all_surface)
 
-def dE_str_dl_k(lines):
-    blocks = [np.full((len(l), 1), -1) for l in lines]
+    return (R2.dot(all_points) * dt).T
+
+def dE_str_dl_k(line_points):
+    blocks = [np.full((len(l), 1), -1) for l in line_points]
     return scipy.linalg.block_diag(*blocks)
 
 def debug_plot_g(g, line_ts_surface):
@@ -724,25 +734,35 @@ def debug_plot_g(g, line_ts_surface):
     # plt.plot(domain, g(domain))
     plt.show()
 
-def Jac_E_str(args, lines, dE_dl):
+def Jac_E_str(args, mid_points, line_points, dE_str_dl):
     theta, a_m, _, l_m = unpack_args(args)
     R = R_theta(theta)
     dR = dR_dtheta(theta, R)
     g = Poly(np.hstack([[0], a_m]))
     gp = g.deriv()
-    line_ts_surface = [newton.t_i_k(R, g, points, T0) for points in lines]
+    line_ts_surface = [newton.t_i_k(R, g, points, T0) for points in line_points]
+
+    all_points = np.concatenate(line_points, axis=1)
+    all_ts = np.concatenate([ts for ts, _ in line_ts_surface])
+    all_surface = np.concatenate([surface for _, surface in line_ts_surface],
+                                 axis=1)
+
     return np.concatenate((
-        dE_str_dtheta(theta, R, dR, g, gp, lines, line_ts_surface),
-        dE_str_dam(theta, R, g, gp, lines, line_ts_surface),
-        np.zeros((dE_dl.shape[0], 2)),
-        dE_dl
+        dE_str_dtheta(theta, R, dR, g, gp, all_points, all_ts, all_surface),
+        dE_str_dam(theta, R, g, gp, all_points, all_ts, all_surface),
+        np.zeros((dE_str_dl.shape[0], 2)),
+        dE_str_dl
     ), axis=1)
 
 def debug_jac(theta, R, g, l_m, line_points, line_ts_surface):
     dR = dR_dtheta(theta, R)
     gp = g.deriv()
 
-    print dE_str_dtheta(theta, R, dR, g, gp, line_points, line_ts_surface).T
+    all_points = np.concatenate(line_points, axis=1)
+    all_ts = np.concatenate([ts for ts, _ in line_ts_surface])
+    all_surface = np.concatenate([surface for _, surface in line_ts_surface], axis=1)
+
+    print dE_str_dtheta(theta, R, dR, g, gp, all_points, all_ts, all_surface).T
     for i in range(3):
         delta = np.zeros(3)
         inc = norm(theta) / 4096
@@ -750,7 +770,7 @@ def debug_jac(theta, R, g, l_m, line_points, line_ts_surface):
         diff = E_str(theta + delta, g, l_m, line_points) - E_str(theta - delta, g, l_m, line_points)
         print diff / (2 * inc)
 
-    print dE_str_dam(theta, R, g, gp, line_points, line_ts_surface).T
+    print dE_str_dam(theta, R, g, gp, all_points, all_ts, all_surface).T
     for i in range(1, DEGREE + 1):
         delta = np.zeros(DEGREE + 1)
         inc = g.coef[i] / 4096
@@ -759,7 +779,67 @@ def debug_jac(theta, R, g, l_m, line_points, line_ts_surface):
             - E_str(theta, Poly(g.coef - delta), l_m, line_points)
         print diff / (2 * inc)
 
-def E_align(args): pass
+def E_align(theta, g, align, mid_points):
+    R = R_theta(theta)
+
+    all_points = mid_points.reshape(3, -1)
+    _, (Xs, _, _) = newton.t_i_k(R, g, all_points, T0)
+    Xs.shape = (2, -1)  # 2 x N
+
+    return (Xs - align[:, newaxis]).flatten()
+
+def E_align_packed(args, mid_points, line_points, dE_str_dl):
+    theta, a_m, align, l_m = unpack_args(args)
+    g = Poly(np.hstack([[0], a_m]))
+    return E_align(theta, g, align, mid_points)
+
+def dE_align_dam(theta, R, g, gp, all_points, all_ts, all_surface):
+    R1, _, _ = R
+
+    dt = dti_dam(theta, R, g, gp, all_points, all_ts, all_surface)
+
+    return (R1.dot(all_points) * dt).T
+
+def dE_align_dtheta(theta, R, dR, g, gp, all_points, all_ts, all_surface):
+    R1, _, _ = R
+    dR1 = dR[:, 0]
+    dR13 = dR[:, 0, 2]
+
+    dt = dti_dtheta(theta, R, dR, g, gp, all_points, all_ts, all_surface)
+
+    term1 = dR1.dot(all_points) * all_ts
+    term2 = R1.dot(all_points) * dt
+    term3 = -dR13 * f
+
+    return term1.T + term2.T + term3
+
+def Jac_E_align(args, mid_points, line_points, dE_str_dl):
+    theta, a_m, _, _ = unpack_args(args)
+    R = R_theta(theta)
+    dR = dR_dtheta(theta, R)
+    g = Poly(np.hstack([[0], a_m]))
+    gp = g.deriv()
+    line_ts_surface = [newton.t_i_k(R, g, points, T0) for points in line_points]
+
+    N = len(line_points)  # number of lines; 2N residuals
+
+    all_points = np.concatenate(line_points, axis=1)
+    all_ts = np.concatenate([ts for ts, _ in line_ts_surface])
+    all_surface = np.concatenate([surface for _, surface in line_ts_surface],
+                                 axis=1)
+
+    return np.concatenate([
+        dE_align_dtheta(theta, R, dR, g, gp, all_points, all_ts, all_surface),
+        dE_align_dam(theta, R, g, gp, all_points, all_ts, all_surface),
+        np.tile([[-1, 0], [0, -1]], (N, 1)),
+        np.zeros((2 * N, N))
+    ], axis=1)
+
+def E_2(*args):
+    return np.concatenate([E_str_packed(*args), E_align_packed(*args)])
+
+def Jac_E_2(*args):
+    return np.concatenate([Jac_E_str(*args), Jac_E_align(*args)])
 
 def make_mesh_XYZ(xs, ys, g):
     return np.array([
@@ -816,6 +896,42 @@ def make_mesh_2d(all_lines, O, R, g):
 
     return mesh_2d
 
+def initial_args(lines, O, theta_0=np.zeros(3)):
+    # flat surface as initial guess.
+    # NB: coeff 0 forced to 0 here. not included in opt.
+    a_m_0 = [0] * DEGREE
+    g_0 = Poly([0] + a_m_0)
+
+    R_0 = R_theta(theta_0)
+    _, ROf_y, ROf_z = R_0.dot(Of)
+
+    # line points on focal plane
+    line_points = [base_points(line, O) for line in lines]
+
+    # line left-mid and right-mid points on focal plane.
+    # axes after transpose: (coord 2, LR 2, line N)
+    mid_points_2d = np.array([
+        [line[0].left_mid() for line in lines],
+        [line[-1].right_mid() for line in lines],
+    ]).transpose(2, 0, 1)
+    assert mid_points_2d.shape[0:2] == (2, 2)
+
+    # axes (coord 3, LR 2, line N)
+    mid_points = image_to_focal_plane(mid_points_2d, O)
+    assert mid_points.shape[0:2] == (3, 2)
+
+    dE_str_dl = dE_str_dl_k(lines)
+
+    line_ts_surface = [newton.t_i_k(R_0, g_0, points, T0) for points in line_points]
+    l_m_0 = [Ys.mean() for ts, (_, Ys, _) in line_ts_surface]
+
+    _, (Xs, _, _) = newton.t_i_k(R_0, g_0, mid_points.reshape(3, -1), T0)
+    align_0 = Xs.reshape(2, -1).mean(axis=1)  # to LR, N
+    assert align_0.shape == (2,)
+
+    return (np.hstack([theta_0, a_m_0, align_0, l_m_0]),
+            (mid_points, line_points, dE_str_dl))
+
 @lib.timeit
 def kim2014(orig):
     lib.debug = True
@@ -834,28 +950,16 @@ def kim2014(orig):
     theta_0 = [atan2(-vy, f) - pi / 2, 0, 0]
     # theta_0 = [-0.3, 0, 0]
     print 'theta_0:', theta_0
-    # flat surface, need to be nonzero to avoid singularity
-    # NB: coeff 0 forced to 0 here. not included in opt.
-    a_m_0 = [0] * DEGREE
 
-    R_0 = R_theta(theta_0)
-    _, ROf_y, ROf_z = R_0.dot(Of)
-
-    # line points on focal plane
-    line_points = [base_points(line, O) for line in lines]
-    Rp_0 = [R_0.dot(points) for points in line_points]
-    # project onto gcs. find t so [R(pt - Of)]_z = g([]_x) = 0
-    # => Rp_z * t = ROf_z => t = ROf_z / Rp_z
-    ts_0 = [ROf_z / Rp_z for _, _, Rp_z in Rp_0]
-    l_m_0 = [(Rp_y * ts - ROf_y).mean() for ts, (_, Rp_y, _) in zip(ts_0, Rp_0)]
-    dE_dl = dE_str_dl_k(lines)
+    args_0, (mid_points, line_points, dE_str_dl) = \
+        initial_args(lines, O, theta_0=theta_0)
 
     result = lib.timeit(opt.least_squares)(
         fun=E_str_packed,
-        x0=np.hstack([theta_0, a_m_0, (0, 0), l_m_0]),
+        x0=args_0,
         jac=Jac_E_str,
         method='lm',
-        args=(line_points, dE_dl),
+        args=(mid_points, line_points, dE_str_dl),
         ftol=1e-2,
         x_scale='jac',
     )
@@ -872,7 +976,7 @@ def kim2014(orig):
 
     print 'final norm:', norm(result.fun)
 
-    # line_ts_surface = [newton.t_i_k(theta, R, g, points) for points in line_points]
+    # line_ts_surface = [newton.t_i_k(R, g, points, T0) for points in line_points]
     # debug_jac(theta, R, g, l_m, line_points, line_ts_surface)
     # debug_plot_g(g, line_ts_surface)
 
@@ -889,13 +993,24 @@ def kim2014(orig):
 
     AH, all_lines, lines = get_AH_lines(im)
 
-    
+    args_0, (mid_points, line_points, dE_str_dl) = initial_args(lines, O)
+
+    # TODO: use E_1 if not aligned
+    result = lib.timeit(opt.least_squares)(
+        fun=E_2,
+        x0=args_0,
+        jac=Jac_E_2,
+        method='lm',
+        args=(mid_points, line_points, dE_str_dl),
+        ftol=1e-2,
+        x_scale='jac',
+    )
 
     return first_pass
 
 def go(argv):
     im = cv2.imread(argv[1], cv2.IMREAD_UNCHANGED)
-    lib.debug = False
+    lib.debug = True
     lib.debug_prefix = 'dewarp/'
     out = kim2014(im)
     cv2.imwrite('dewarped.png', out)
