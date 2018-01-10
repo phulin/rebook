@@ -7,6 +7,8 @@ from __future__ import division
 import numpy as np
 cimport numpy as np
 
+import sys
+
 from numpy import dot, einsum
 from numpy.linalg import norm, solve
 
@@ -45,7 +47,11 @@ def feature_sign_search(np.ndarray[np.float64_t, ndim=2] Y_T,
         A_T_y = dot(A_T, y)
 
         if idx % 250 == 0:
-            print 'idx', idx, 'step 1'
+            print '\nX[{: 5d}]'.format(idx),
+            sys.stdout.flush()
+        elif idx % 10 == 0:
+            sys.stdout.write('.')
+            sys.stdout.flush()
 
         last_selected = -1
         last_objective = np.inf
@@ -65,8 +71,6 @@ def feature_sign_search(np.ndarray[np.float64_t, ndim=2] Y_T,
                 active_set[i] = True
                 theta[i] = -np.sign(L2_partials[i])
                 last_selected = i
-            else:
-                print 'WARNING: no good ones to activate - max:', L2_partials_abs[i]
 
             while True:
                 # print '---- STEP 3 ----'
@@ -144,3 +148,5 @@ def feature_sign_search(np.ndarray[np.float64_t, ndim=2] Y_T,
             # print 'highest zero partial:', abs(f_partials[zero_coeffs]).max()
             if np.all(np.abs(L2_partials[zero_coeffs]) <= gamma):
                 break
+
+    print
