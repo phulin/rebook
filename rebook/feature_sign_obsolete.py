@@ -30,6 +30,7 @@ import numpy as np
 import six
 from six.moves import zip as izip
 
+logging.basicConfig()
 log = logging.getLogger(__name__)
 log.setLevel(logging.INFO)
 
@@ -136,7 +137,7 @@ def _feature_sign_search_single(dictionary, signal, sparsity, max_iter,
     sds = np.dot(signal.T, signal)
     counter = count(0)
     while z_opt > sparsity or not nz_optimal:
-        if six.next(counter) == max_iter:
+        if (six.next(counter) == max_iter).all():
             break
         if nz_optimal:
             candidate = np.argmax(np.abs(grad) * (signs == 0))

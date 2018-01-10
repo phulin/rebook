@@ -365,12 +365,12 @@ def generate_mesh(all_lines, lines, C_arc, v, n_points_h):
     return np.array(longitudes).transpose(1, 0, 2)
 
 @lib.timeit
-def correct_geometry(orig, mesh):
+def correct_geometry(orig, mesh, interpolation=cv2.INTER_LINEAR):
     # coordinates (u, v) on mesh -> mesh[u][v] = (x, y) in distorted image
     mesh32 = mesh.astype(np.float32)
     xmesh, ymesh = mesh32[:, :, 0], mesh32[:, :, 1]
     conv_xmesh, conv_ymesh = cv2.convertMaps(xmesh, ymesh, cv2.CV_16SC2)
-    out = cv2.remap(orig, conv_xmesh, conv_ymesh, interpolation=cv2.INTER_LINEAR)
+    out = cv2.remap(orig, conv_xmesh, conv_ymesh, interpolation=interpolation)
     lib.debug_imwrite('corrected.png', out)
 
     return out
@@ -1041,7 +1041,7 @@ def kim2014(orig):
     lib.debug_imwrite('align.png', debug)
 
     mesh_2d = make_mesh_2d(all_lines, O, R, g)
-    second_pass = correct_geometry(orig, mesh_2d)
+    second_pass = correct_geometry(orig, mesh_2d, interpolation=cv2.INTER_LANCZOS4)
 
     return second_pass
 

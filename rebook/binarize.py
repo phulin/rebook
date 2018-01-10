@@ -103,19 +103,6 @@ def ntirogiannis2014(im):
     # take everything that's FG in O_eroded and niblack
     return O_eroded | local
 
-# @lib.timeit
-# def sauvola(im, window_size=61, k=0.2, thresh_factor=1.0):
-#     thresh = threshold_sauvola(im, k=k, window_size=window_size)
-#     booleans = im > (thresh * thresh_factor)
-#     ints = booleans.astype(np.uint8) * 255
-#     return ints
-# 
-# @lib.timeit
-# def niblack(im, window_size=61, k=0.2):
-#     thresh = threshold_niblack(im, window_size=window_size, k=k)
-#     booleans = im > (thresh * 1.0)
-#     return -booleans.astype(np.uint8)
-
 def mean_std(im, W):
     s = W / 2
     N = W * W
