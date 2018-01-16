@@ -4,13 +4,14 @@ import glob
 import numpy as np
 import os
 import re
+from multiprocessing import cpu_count
 from multiprocessing.pool import Pool
 from os.path import join, isfile
 from subprocess import check_call
 
 import algorithm
-from algorithm import skew_angle, safe_rotate
 from binarize import binarize, adaptive_otsu
+import collate
 from geometry import Crop
 from lib import debug_imwrite
 import lib
@@ -50,7 +51,7 @@ def crop(im, bw, split=True):
 
     AH = algorithm.dominant_char_height(bw)
     letter_boxes = algorithm.letter_contours(AH, bw)
-    lines = algorithm.collate_lines(AH, letter_boxes)
+    lines = collate.collate_lines(AH, letter_boxes)
 
     stroke_widths = algorithm.fast_stroke_width(bw)
     debug_imwrite('strokes.png', lib.normalize_u8(stroke_widths.clip(0, 10)))
@@ -81,8 +82,9 @@ def crop(im, bw, split=True):
             # print 'mean:', masked_strokes.mean(), 'std:', masked_strokes.std()
             mean = masked_strokes.mean()
             if mean < strokes_mean - strokes_std:
-                print 'skipping', x, y,
-                print '  mean:', masked_strokes.mean(), 'std:', masked_strokes.std()
+                print 'skipping{: 5d}{: 5d} {:.03f} {:.03f}'.format(
+                    x, y, mean, masked_strokes.std()
+                )
                 draw_box(debug, c, (0, 0, 255), 2)
             else:
                 draw_box(debug, c, (0, 255, 0), 2)
@@ -90,6 +92,10 @@ def crop(im, bw, split=True):
                 good_contours.append(c)
 
         line_crops.append(line_crop)
+
+    if not line_crops:
+        print 'WARNING: no lines in image.'
+        return AH, lines, []
 
     line_lefts = np.array([lc.x0 for lc in line_crops])
     line_rights = np.array([lc.x1 for lc in line_crops])
@@ -141,8 +147,8 @@ def process_image(original, dpi):
         if c.nonempty():
             bw_cropped = c.apply(bw)
             orig_cropped = c.apply(original)
-            angle = skew_angle(bw_cropped, original, AH, lines)
-            rotated = safe_rotate(orig_cropped, angle)
+            angle = algorithm.skew_angle(bw_cropped, original, AH, lines)
+            rotated = algorithm.safe_rotate(orig_cropped, angle)
 
             lib.debug = False
             rotated_bw = binarize(rotated, adaptive_otsu, resize=1.0)
@@ -173,6 +179,18 @@ def process_file((inpath, outdir, dpi)):
 
     return outfiles
 
+def make_indir(path):
+    if os.path.isfile(path) and path.endswith('.pdf'):
+        dirpath = path[:-4]
+        if not os.path.isdir(dirpath):
+            os.makedirs(dirpath)
+        if not os.listdir(dirpath):
+            check_call(['pdfimages', '-png', path, join(dirpath, 'page')])
+        return dirpath
+    else:
+        assert os.path.isdir(path)
+        return path
+
 def run(args):
     if args.single_file:
         lib.debug = True
@@ -182,25 +200,26 @@ def run(args):
             cv2.imwrite('out{}.png'.format(idx), outimg)
         return
 
-    paths = [[join(indir, fn) for fn in os.listdir(indir)] for indir in args.indirs]
+    if args.concurrent:
+        pool = Pool(cpu_count())
+        map_fn = pool.map
+    else:
+        map_fn = map
+
+    indirs = map_fn(make_indir, args.indirs)
+    paths = [[join(indir, fn) for fn in os.listdir(indir)] for indir in indirs]
     files = filter(lambda f: re.search('.(png|jpg|tif)$', f),
                 sum(paths, []))
     files.sort(key=lambda f: map(int, re.findall('[0-9]+', f)))
     im = cv2.imread(files[0], cv2.IMREAD_UNCHANGED)
 
-    for d in args.indirs:
+    for d in indirs:
         if not os.path.isdir(join(args.outdir, d)):
             os.makedirs(join(args.outdir, d))
 
-    if args.concurrent:
-        pool = Pool(2)
-        outfiles = pool.map(process_file, zip(files,
-                            [args.outdir] * len(files),
-                            [args.dpi] * len(files)))
-    else:
-        outfiles = map(process_file, zip(files,
-                       [args.outdir] * len(files),
-                       [args.dpi] * len(files)))
+    outfiles = map_fn(process_file, zip(files,
+                        [args.outdir] * len(files),
+                        [args.dpi] * len(files)))
 
     outfiles = sum(outfiles, [])
     outfiles.sort(key=lambda f: map(int, re.findall('[0-9]+', f)))
