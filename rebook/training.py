@@ -7,6 +7,7 @@ import numpy as np
 # import numpy.ma as ma
 import os
 import scipy.optimize
+import scipy.linalg
 import sys
 
 from numpy import dot, newaxis
@@ -126,7 +127,7 @@ def solve_cholesky(L, b):
     return solve_triangular(L.T, y)
 
 @lib.timeit
-@profile
+# @profile
 def feature_sign_search_vec(Y_T, X_T, A_T, gamma):
     Y = Y_T.T.copy()
     A = A_T.T.copy()
@@ -181,11 +182,10 @@ def feature_sign_search_vec(Y_T, X_T, A_T, gamma):
                 active_idxs, = active.nonzero()
                 q_hat = Q[active_idxs, idx]
                 ATA_hat = ATA[np.ix_(active_idxs, active_idxs)]
-                try:
-                    x_new_hat = solve(ATA_hat, q_hat)
-                except np.linalg.linalg.LinAlgError:
-                    x_new_hat = np.zeros(active_idxs.shape[0])
-                if np.abs(dot(ATA_hat, x_new_hat) - q_hat).mean() > 0.1:
+
+                _, x_new_hat, info = scipy.linalg.lapack.dposv(ATA_hat, q_hat)
+
+                if info != 0:
                     x_new_hat = dot(pinv(ATA_hat), q_hat)
                     if np.abs(dot(ATA_hat, x_new_hat) - q_hat).mean() > 0.1:
                         # no good. try null-space zero crossing.
@@ -209,10 +209,12 @@ def feature_sign_search_vec(Y_T, X_T, A_T, gamma):
                 X_new[active_idxs, idx] = x_new_hat
 
             # sign_changes = np.logical_xor(x_new_hat > 0, x_hat > 0)
-            sign_changes = np.logical_and(
+            sign_changes = np.logical_and.reduce([
                 np.logical_xor(X_new > 0, X_working > 0),
-                np.abs(X_working) >= 1e-7  # don't select zero coefficients of x_hat.
-            )
+                np.abs(X_working) >= 1e-7,
+                # np.abs(X_new) >= 1e-7,
+                # np.abs((X_new - X_working) / X_working) >= 1e-9,
+            ])
 
             # (1 - t) * x + t * x_new
             count_sign_changes = sign_changes.sum(axis=0)
@@ -227,7 +229,6 @@ def feature_sign_search_vec(Y_T, X_T, A_T, gamma):
                 Y_sign = Y_working[:, has_sign_changes]
                 X_new_sign = X_new[:, has_sign_changes]
                 X_sign = X_working[:, has_sign_changes]
-                X_new_minus_X = X_new_sign - X_sign
 
                 compressed_ts = np.zeros((max_sign_changes, has_sign_changes.shape[0]))
                 compressed_mask = np.tile(np.arange(max_sign_changes),
@@ -237,29 +238,56 @@ def feature_sign_search_vec(Y_T, X_T, A_T, gamma):
 
                 # ts = -x_hat_sign / (x_new_hat_sign - x_hat_sign)
                 # NB: only faster to use where= on slow ops like divide.
-                ts = np.divide(-X_sign, X_new_minus_X, where=sign_changes)
-                compressed_ts.T[compressed_mask.T] = ts.T[sign_changes.T]
-                test_X = np.concatenate([
-                    X_sign[newaxis, :, :],
-                    X_sign + compressed_ts[:, newaxis, :] * X_new_minus_X[newaxis, :, :],
-                    X_new_sign[newaxis, :, :]
-                ], axis=0)
+                all_ts = np.divide(-X_sign, X_new_sign - X_sign, where=sign_changes)
+
+                # transpose necessary to get order right.
+                compressed_ts.T[compressed_mask.T] = all_ts.T[sign_changes.T]
+                ts = compressed_ts[:, newaxis, :]  # broadcast over components.
+                test_X_ts = np.multiply(1 - ts, X_sign, where=compressed_mask[:, newaxis, :]) \
+                    + np.multiply(ts, X_new_sign, where=compressed_mask[:, newaxis, :])
+                test_X = np.concatenate([test_X_ts, X_new_sign[newaxis, :, :]], axis=0)
                 # assert np.sum(test_X[0, X_new_sign != 0] == 0) > 0
 
                 A_X_sign = dot(A, X_sign)
                 A_X_new_sign = dot(A, X_new_sign)
-                A_X_new_minus_X = A_X_new_sign - A_X_sign
-                test_A_X = np.concatenate([
-                    A_X_sign[newaxis, :, :],
-                    A_X_sign + compressed_ts[:, newaxis, :] * A_X_new_minus_X,
-                    A_X_new_sign[newaxis, :, :]
-                ], axis=0)
-                diffs = Y_sign - test_A_X
-                objectives = np.einsum('ijk,ijk->ik', diffs, diffs) \
+                test_A_X_ts = np.multiply(1 - ts, A_X_sign, where=compressed_mask[:, newaxis, :]) \
+                    + np.multiply(ts, A_X_new_sign, where=compressed_mask[:, newaxis, :])
+                test_A_X = np.concatenate([test_A_X_ts, A_X_new_sign[newaxis, :, :]], axis=0)
+
+                test_mask = np.concatenate([
+                    compressed_mask,
+                    np.full((1, compressed_mask.shape[1]), True),
+                ])
+                objectives = np.square(Y_sign - test_A_X, where=test_mask[:, newaxis, :]).sum(axis=1) \
                     + gamma * np.abs(test_X).sum(axis=1)
+                objectives[~test_mask] = np.inf
                 lowest_objective = objectives.argmin(axis=0)
                 best_X = test_X[lowest_objective, :, np.arange(test_X.shape[2])].T
                 assert np.all(best_X[:, 0] == test_X[lowest_objective[0], :, 0])
+
+                # # coord_mask = sign_changes[:, 0]
+                # coord_mask = active_set_working[:, has_sign_changes][:, 0]
+                # shape = X_sign[coord_mask, 0][newaxis, ...].shape
+                # debug_array = np.concatenate([
+                #     X_sign[coord_mask, 0][newaxis, ...],
+                #     X_new_sign[coord_mask, 0][newaxis, ...],
+                #     np.full(shape, np.nan),
+                #     all_ts[coord_mask, 0][newaxis, ...],
+                #     np.full(shape, np.nan),
+                #     test_X[:, coord_mask, 0],
+                # ])
+                # objective_mark = np.zeros(objectives[:, 0].shape)
+                # objective_mark[lowest_objective[0]] = -1
+                # objective_mark[~test_mask[:, 0]] = np.nan
+                # print np.concatenate([
+                #     np.concatenate([[np.nan] * 5, compressed_ts[:, 0], [1]])[:, newaxis],
+                #     np.full((debug_array.shape[0], 1), np.nan),
+                #     debug_array,
+                #     np.full((debug_array.shape[0], 1), np.nan),
+                #     np.concatenate([[np.nan] * 5, objectives[:, 0]])[:, newaxis],
+                #     np.concatenate([[np.nan] * 5, objective_mark])[:, newaxis],
+                # ], axis=1)
+                # print best_X[coord_mask, 0]
 
                 X_new[:, has_sign_changes] = best_X
 
@@ -285,7 +313,7 @@ def feature_sign_search_vec(Y_T, X_T, A_T, gamma):
 
             working_rows = working_rows[row_highest_nz_partial >= 1e-7]
 
-        np.save('dict_inter.npy', X)
+        np.save('fss_inter.npy', X.T)
 
         objective = np.square(Y - dot(A, X)).sum() + gamma * np.abs(X).sum()
         print 'CURRENT OBJECTIVE:', objective
@@ -367,8 +395,8 @@ def train(argv):
     if os.path.isfile('dict.npy'):
         D_T = np.load('dict.npy')
     else:
-        # D_T = np.random.normal(size=(K, W_l * W_l + W_h * W_h)).astype(np.float64)
-        D_T = X_T[np.random.choice(X_T.shape[0], size=K, replace=False)]
+        D_T = np.random.normal(size=(K, W_l * W_l + W_h * W_h)).astype(np.float64)
+        # D_T = X_T[np.random.choice(X_T.shape[0], size=K, replace=False)]
         D_T /= norm(D_T, axis=1)[:, newaxis]
         np.save('dict.npy', D_T)
 
@@ -379,6 +407,7 @@ def train(argv):
     for i in range(100000):
         print '\n==== ITERATION', i, '===='
         feature_sign_search_vec(X_T, Z_T, D_T, lam)
+        # feature_sign_search(X_T, Z_T, D_T, lam)
         np.save('fss.npy', Z_T)
 
         diff = (X_T - dot(Z_T, D_T)).reshape(-1)
@@ -416,4 +445,5 @@ def train(argv):
 if __name__ == '__main__':
     lib.debug = True
     lib.debug_prefix = 'training/'
+    np.set_printoptions(precision=3, linewidth=200)
     train(sys.argv)
