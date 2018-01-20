@@ -10,7 +10,8 @@ import scipy.optimize
 import sys
 
 from numpy import dot, newaxis
-from numpy.linalg import norm, solve
+from numpy.linalg import norm, pinv, solve
+from scipy.linalg import solve_triangular
 
 import lib
 
@@ -62,6 +63,7 @@ def row_square_norm(A):
 # Optimize B in-place, using Lagrange dual method of:
 # Lee et al., Efficient Sparse Coding Algorithms.
 # with c=1.
+@lib.timeit
 def optimize_dictionary(X_T, S_T, B_T, Lam_0=None):
     SST = dot(S_T.T, S_T)
     XST = dot(X_T.T, S_T)
@@ -118,10 +120,17 @@ def print_dict(filename, D_T):
 
     lib.debug_imwrite(filename, dict_square)
 
+def solve_cholesky(L, b):
+    # solve L L* x = b
+    y = solve_triangular(L, b, lower=True)
+    return solve_triangular(L.T, y)
+
+@lib.timeit
+@profile
 def feature_sign_search_vec(Y_T, X_T, A_T, gamma):
     Y = Y_T.T.copy()
     A = A_T.T.copy()
-    X = X_T.T
+    X = X_T.T.copy()
     ATA = dot(A_T, A)
 
     X_T[abs(X_T) < 1e-7] = 0
@@ -131,31 +140,37 @@ def feature_sign_search_vec(Y_T, X_T, A_T, gamma):
     A_T_Y = dot(A_T, Y)
 
     first_step_2 = True
+    last_Is = None
+
+    # shape same as X
+    L2_partials = 2 * (dot(ATA, X) - A_T_Y)
+    L2_partials_abs = np.abs(L2_partials)
 
     while True:
         print
         print '==== STEP 2 ===='
-        # STEP 2
-        # shape same as X
-        L2_partials = 2 * (dot(ATA, X) - A_T_Y)
-        L2_partials_abs = np.abs(L2_partials)
 
         L2_partials_abs[np.abs(X) >= 1e-7] = 0  # rule out zero elements of X
         Is = L2_partials_abs.argmax(axis=0)  # max for each column
 
-        activate_rows = L2_partials_abs.max(axis=0) > gamma
-        index = (Is[activate_rows], np.nonzero(activate_rows)[0])
+        activate_rows, = np.nonzero(L2_partials_abs.max(axis=0) > gamma)
+        index = (Is[activate_rows], activate_rows)
         active_set[index] = True
         theta[index] = -np.sign(L2_partials[index])
         print 'mean active:', active_set.sum(axis=0).mean()
-        print 'activating rows:', activate_rows.sum()
+        print 'activating rows:', activate_rows.shape[0]
+        if activate_rows.shape[0] == 0:
+            print 'WARNING: activating nothing'
+        assert last_Is is None or \
+            not np.all(last_Is == Is[activate_rows])
+        last_Is = Is[activate_rows]
 
-        working_rows = np.ones(activate_rows.shape, dtype=bool) \
-            if first_step_2 else activate_rows
+        working_rows = np.arange(X.shape[1]) if first_step_2 else activate_rows
         first_step_2 = False
 
         while True:
             print '---- STEP 3 ----'
+            print 'working rows:', working_rows.shape[0]
 
             Q = A_T_Y[:, working_rows] - gamma / 2 * theta[:, working_rows]
             X_working = X[:, working_rows]
@@ -163,33 +178,35 @@ def feature_sign_search_vec(Y_T, X_T, A_T, gamma):
             Y_working = Y[:, working_rows]
             active_set_working = active_set[:, working_rows]
             for idx, active in enumerate(active_set_working.T):
-                ATA_hat = ATA[np.ix_(active, active)]
-                X_new[active, idx] = solve(ATA_hat, Q[active, idx])
+                active_idxs, = active.nonzero()
+                q_hat = Q[active_idxs, idx]
+                ATA_hat = ATA[np.ix_(active_idxs, active_idxs)]
+                try:
+                    x_new_hat = solve(ATA_hat, q_hat)
+                except np.linalg.linalg.LinAlgError:
+                    x_new_hat = np.zeros(active_idxs.shape[0])
+                if np.abs(dot(ATA_hat, x_new_hat) - q_hat).mean() > 0.1:
+                    x_new_hat = dot(pinv(ATA_hat), q_hat)
+                    if np.abs(dot(ATA_hat, x_new_hat) - q_hat).mean() > 0.1:
+                        # no good. try null-space zero crossing.
+                        active = active_set[:, idx]
+                        x_hat = X[active_idxs, idx]
+                        theta_hat = theta[active_idxs, idx]
+                        u, s, v = np.linalg.svd(ATA_hat)
+                        assert s[s.shape[0] - 1] < 1e-7
+                        z = v[v.shape[0] - 1]
+                        assert np.abs(dot(ATA_hat, z)).sum() < 1e-7
+                        # [x_hat + t_i * z]_i = 0
+                        # want to reduce theta dot (x + tz) => t * theta dot z
+                        # so t should have opposite sign of theta dot z
+                        direction = -np.sign(dot(theta_hat, z))
+                        null_ts = -x_hat / z
+                        null_ts[np.sign(null_ts) != direction] = np.inf
+                        null_ts[np.abs(null_ts) < 1e-7] = np.inf
+                        first_change = np.abs(null_ts).argmin()
+                        x_new_hat = x_hat + null_ts[first_change] * z
 
-            # null_rows = np.abs(dot(ATA, X_new) - Q).sum(axis=0) \
-            #     >= 1e-3 * norm(Q, axis=0)
-
-            # for i in np.nonzero(null_rows)[0]:
-            #     # no good. try null-space zero crossing
-            #     print 'null row!', i
-            #     active = active_set[:, i]
-            #     x_hat = X[active, i]
-            #     theta_hat = theta[active, i]
-            #     ATA_hat = ATA[np.ix_(active, active)]
-            #     u, s, v = np.linalg.svd(ATA_hat)
-            #     assert s[s.shape[0] - 1] < 1e-7
-            #     z = v[v.shape[0] - 1]
-            #     assert np.abs(dot(ATA_hat, z)).sum() < 1e-7
-            #     # print 'z:', z
-            #     # [x_hat + t_i * z]_i = 0
-            #     # want to reduce theta dot (x + tz) => t * theta dot z
-            #     # so t should have opposite sign of theta dot z
-            #     direction = -np.sign(dot(theta_hat, z))
-            #     null_ts = -x_hat / z
-            #     null_ts[np.sign(null_ts) != direction] = np.inf
-            #     null_ts[np.abs(null_ts) < 1e-7] = np.inf
-            #     first_change = np.abs(null_ts).argmin()
-            #     X_new[active, i] = x_hat + null_ts[first_change] * z
+                X_new[active_idxs, idx] = x_new_hat
 
             # sign_changes = np.logical_xor(x_new_hat > 0, x_hat > 0)
             sign_changes = np.logical_and(
@@ -200,9 +217,9 @@ def feature_sign_search_vec(Y_T, X_T, A_T, gamma):
             # (1 - t) * x + t * x_new
             count_sign_changes = sign_changes.sum(axis=0)
             max_sign_changes = count_sign_changes.max()
-            has_sign_changes = count_sign_changes > 0
+            has_sign_changes, = np.nonzero(count_sign_changes > 0)
             print 'max sign changes:', max_sign_changes
-            print 'rows with sign changes:', has_sign_changes.sum()
+            print 'rows with sign changes:', has_sign_changes.shape[0]
 
             if max_sign_changes > 0:
                 sign_changes = sign_changes[:, has_sign_changes]
@@ -212,7 +229,7 @@ def feature_sign_search_vec(Y_T, X_T, A_T, gamma):
                 X_sign = X_working[:, has_sign_changes]
                 X_new_minus_X = X_new_sign - X_sign
 
-                compressed_ts = np.zeros((max_sign_changes, has_sign_changes.sum()))
+                compressed_ts = np.zeros((max_sign_changes, has_sign_changes.shape[0]))
                 compressed_mask = np.tile(np.arange(max_sign_changes),
                                           (compressed_ts.shape[1], 1)).T < count_sign_changes
                 assert compressed_mask.shape == compressed_ts.shape
@@ -223,13 +240,22 @@ def feature_sign_search_vec(Y_T, X_T, A_T, gamma):
                 ts = np.divide(-X_sign, X_new_minus_X, where=sign_changes)
                 compressed_ts.T[compressed_mask.T] = ts.T[sign_changes.T]
                 test_X = np.concatenate([
+                    X_sign[newaxis, :, :],
                     X_sign + compressed_ts[:, newaxis, :] * X_new_minus_X[newaxis, :, :],
                     X_new_sign[newaxis, :, :]
                 ], axis=0)
                 # assert np.sum(test_X[0, X_new_sign != 0] == 0) > 0
 
-                diffs = Y_sign[:, newaxis, :] - dot(A, test_X)
-                objectives = np.einsum('ijk,ijk->jk', diffs, diffs) \
+                A_X_sign = dot(A, X_sign)
+                A_X_new_sign = dot(A, X_new_sign)
+                A_X_new_minus_X = A_X_new_sign - A_X_sign
+                test_A_X = np.concatenate([
+                    A_X_sign[newaxis, :, :],
+                    A_X_sign + compressed_ts[:, newaxis, :] * A_X_new_minus_X,
+                    A_X_new_sign[newaxis, :, :]
+                ], axis=0)
+                diffs = Y_sign - test_A_X
+                objectives = np.einsum('ijk,ijk->ik', diffs, diffs) \
                     + gamma * np.abs(test_X).sum(axis=1)
                 lowest_objective = objectives.argmin(axis=0)
                 best_X = test_X[lowest_objective, :, np.arange(test_X.shape[2])].T
@@ -238,34 +264,45 @@ def feature_sign_search_vec(Y_T, X_T, A_T, gamma):
                 X_new[:, has_sign_changes] = best_X
 
             # update x, theta, active set.
+            zero_coeffs_mask = np.abs(X_new) < 1e-7
+            zero_coeffs = np.nonzero(zero_coeffs_mask)
+            X_new[zero_coeffs] = 0
             X[:, working_rows] = X_new
-            zero_coeffs = np.abs(X) < 1e-7
-            X[zero_coeffs] = 0
-            active_set[zero_coeffs] = False
-            theta = np.sign(X)
+            active_set[:, working_rows] = ~zero_coeffs_mask
+            theta[:, working_rows] = np.sign(X_new)
 
-            objective = np.square(Y - dot(A, X)).sum() + gamma * np.abs(X).sum()
-            print 'CURRENT OBJECTIVE:', objective
+            # objective = np.square(Y - dot(A, X)).sum() + gamma * np.abs(X).sum()
+            # print 'CURRENT OBJECTIVE:', objective
 
-            # diff = y - dot(A, x)
-            # current_objective = dot(diff, diff) + gamma * abs(x).sum()
-            # # print 'x:', x[x != 0]
-            # # print 'CURRENT OBJECTIVE:', dot(diff, diff), '+', gamma * abs(x).sum()
-            # assert current_objective < last_objective + 1e-7
-            # last_objective = current_objective
-
-            L2_partials = 2 * (dot(ATA, X) - A_T_Y)
-            f_partials = L2_partials + gamma * theta
-            print 'still nonoptimal:', np.sum(np.abs(f_partials[~zero_coeffs]) >= 1e-7)
-            if np.all(np.abs(f_partials[~zero_coeffs]) < 1e-7):
+            L2_partials_working = 2 * (dot(ATA, X_new) - A_T_Y[:, working_rows])
+            f_partials = L2_partials_working + gamma * theta[:, working_rows]
+            # only look at max of nonzero coefficients.
+            f_partials[zero_coeffs] = 0
+            row_highest_nz_partial = np.abs(f_partials).max(axis=0)
+            print 'highest nonzero partial:', row_highest_nz_partial.max()
+            if max_sign_changes == 0 or row_highest_nz_partial.max() < 1e-7:
                 break
 
-        print 'highest zero partial:', np.abs(L2_partials[zero_coeffs]).max()
-        if np.all(np.abs(L2_partials[zero_coeffs]) <= gamma):
+            working_rows = working_rows[row_highest_nz_partial >= 1e-7]
+
+        np.save('dict_inter.npy', X)
+
+        objective = np.square(Y - dot(A, X)).sum() + gamma * np.abs(X).sum()
+        print 'CURRENT OBJECTIVE:', objective
+        assert objective < 1e11
+
+        zero_coeffs = np.abs(X) < 1e-7
+        L2_partials[:, working_rows] = L2_partials_working
+        L2_partials_abs[:, working_rows] = np.abs(L2_partials_working)
+        highest_zero_partial = L2_partials_abs[zero_coeffs].max()
+        print 'highest zero partial:', highest_zero_partial
+        if highest_zero_partial <= gamma * 1.01:
             break
 
-def make_dicts(argv):
-    face = freetype.Face("/Library/Fonts/Microsoft/Constantia.ttf")
+    X_T.T = X[:]
+
+def training_data(font_path, W_l, W_h):
+    face = freetype.Face(font_path)
 
     hi_res = create_mosaic(face, HI_SIZE)
     cv2.imwrite('hi.png', hi_res)
@@ -275,8 +312,6 @@ def make_dicts(argv):
                         interpolation=cv2.INTER_AREA)
     cv2.imwrite('lo.png', lo_res)
 
-    W_l = 5  # window size
-    W_h = 2 * W_l
     # make sure we're on edges (in hi-res reference)
     counts = cv2.boxFilter(hi_res.clip(0, 1), -1, (W_h, W_h), normalize=False)
     edge_patches = np.logical_and(counts > 4 * W_l, counts < W_h * W_h - 4 * W_l)
@@ -307,25 +342,44 @@ def make_dicts(argv):
     # Z = argmin_Z( ||X-DZ||_2^2 ) + lam ||Z||_1
     # D: (W_l*W_l, K); Z: (K, t); X: (W_l*W_l, t)
 
+    return coupled_patches
+
+def train(argv):
+    W_l = 5  # window size
+    W_h = 2 * W_l
+
     K = 1024  # Dictionary size
     lam = 0.1  # weight of sparsity
-    X_T = coupled_patches
-    Z_T = np.zeros((t, K), dtype=np.float64)
 
-    # D_T = X_T[np.random.choice(X_T.shape[0], size=K, replace=False)]
-    D_T = np.random.normal(size=(K, W_l * W_l + W_h * W_h)).astype(np.float64)
-    D_T /= norm(D_T, axis=1)[:, newaxis]
-    print X_T.shape, Z_T.shape, D_T.shape
+    if os.path.isfile('training.npy'):
+        X_T = np.load('training.npy')
+    else:
+        X_T = training_data("/Library/Fonts/Microsoft/Constantia.ttf", W_l, W_h)
+        np.save('training.npy', X_T)
+
+    t = X_T.shape[0]
+
+    if os.path.isfile('fss.npy'):
+        Z_T = np.load('fss.npy')
+    else:
+        Z_T = np.zeros((t, K), dtype=np.float64)
+
+    if os.path.isfile('dict.npy'):
+        D_T = np.load('dict.npy')
+    else:
+        # D_T = np.random.normal(size=(K, W_l * W_l + W_h * W_h)).astype(np.float64)
+        D_T = X_T[np.random.choice(X_T.shape[0], size=K, replace=False)]
+        D_T /= norm(D_T, axis=1)[:, newaxis]
+        np.save('dict.npy', D_T)
+
+    print 'shapes:', X_T.shape, Z_T.shape, D_T.shape
 
     Lam_last = None
     D_T_last = None
     for i in range(100000):
         print '\n==== ITERATION', i, '===='
-        if i == 0 and os.path.isfile('fss.npy'):
-            Z_T = np.load('fss.npy')
-        else:
-            feature_sign_search_vec(X_T, Z_T, D_T, lam)
-            np.save('fss.npy', Z_T)
+        feature_sign_search_vec(X_T, Z_T, D_T, lam)
+        np.save('fss.npy', Z_T)
 
         diff = (X_T - dot(Z_T, D_T)).reshape(-1)
         objective = dot(diff, diff).sum() + lam * abs(Z_T).sum()
@@ -351,8 +405,8 @@ def make_dicts(argv):
         print 'highest weight:', weight
         print weight * D_T[patch_D, :W_l * W_l].reshape(W_l, W_l)
         print weight * D_T[patch_D, W_l * W_l:].reshape(W_h, W_h)
-        print lo_patches[patch_X]
-        print hi_patches[patch_X]
+        print X_T[patch_X, :W_l * W_l].reshape(W_l, W_l)
+        print X_T[patch_X, W_h * W_h:].reshape(W_h, W_h)
         print dot(Z_T[patch_X], D_T)[:W_l * W_l]
 
         diff = (X_T - dot(Z_T, D_T)).reshape(-1)
@@ -362,4 +416,4 @@ def make_dicts(argv):
 if __name__ == '__main__':
     lib.debug = True
     lib.debug_prefix = 'training/'
-    make_dicts(sys.argv)
+    train(sys.argv)
