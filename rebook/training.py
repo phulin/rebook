@@ -372,6 +372,45 @@ def training_data(font_path, W_l, W_h):
 
     return coupled_patches
 
+def feature_sign_search_alternating(X_T, Z_T, D_T, lam):
+    feature_sign_search_vec(X_T, Z_T, D_T, lam)
+    # feature_sign_search(X_T, Z_T, D_T, lam)
+    np.save('fss.npy', Z_T)
+
+    diff = (X_T - dot(Z_T, D_T)).reshape(-1)
+    objective = dot(diff, diff).sum() + lam * abs(Z_T).sum()
+    print('\nTOTAL OBJECTIVE VALUE:', objective)
+
+    print('optimizing dict.')
+    global Lam_last
+    Lam_last = optimize_dictionary(X_T, Z_T, D_T, Lam_0=Lam_last)
+    np.save('dict.npy', D_T)
+
+def blockwise_coord_descent(X_T, S_T, B_T, lam):
+    alpha = lam / 2.
+    K = B_T.shape[0]
+
+    A = B_T.dot(B_T.T)
+    np.fill_diagonal(A, 0)
+    E = B_T.dot(X_T.T)
+    S = S_T.T
+
+    for k in range(K):
+        row = E[k] - A[k].dot(S)
+        S[k] = np.maximum(row, alpha) + np.minimum(row, -alpha)
+
+    np.save('fss.npy', S_T)
+
+    G = S.dot(S_T)
+    np.fill_diagonal(G, 0)
+    W = X_T.T.dot(S_T)
+
+    for k in range(K):
+        row = W[:, k] - B_T.T.dot(G[:, k])
+        B_T[k] = row / norm(row)
+
+    np.save('dict.npy', B_T)
+
 def train(argv):
     W_l = 5  # window size
     W_h = 2 * W_l
@@ -402,21 +441,13 @@ def train(argv):
 
     print('shapes:', X_T.shape, Z_T.shape, D_T.shape)
 
+    global Lam_last
     Lam_last = None
     D_T_last = None
     for i in range(100000):
-        print '\n==== ITERATION', i, '===='
-        feature_sign_search_vec(X_T, Z_T, D_T, lam)
-        # feature_sign_search(X_T, Z_T, D_T, lam)
-        np.save('fss.npy', Z_T)
-
-        diff = (X_T - dot(Z_T, D_T)).reshape(-1)
-        objective = dot(diff, diff).sum() + lam * abs(Z_T).sum()
-        print '\nTOTAL OBJECTIVE VALUE:', objective
-
-        print 'optimizing dict.'
-        Lam_last = optimize_dictionary(X_T, Z_T, D_T, Lam_0=Lam_last)
-        np.save('dict.npy', D_T)
+        print('\n==== ITERATION', i, '====')
+        # feature_sign_search_alternating(X_T, Z_T, D_T, lam)
+        blockwise_coord_descent(X_T, Z_T, D_T, lam)
 
         if D_T_last is not None:
             relative_err = abs(D_T - D_T_last).mean() / abs(D_T_last).mean()
