@@ -3,10 +3,10 @@ import numpy as np
 import numpy.polynomial.polynomial as poly
 import sys
 
-from algorithm import fast_stroke_width
-import inpaint
-import lib
-from lib import normalize_u8, clip_u8, bool_to_u8, debug_imwrite
+from .algorithm import fast_stroke_width
+from . import inpaint
+from . import lib
+from .lib import normalize_u8, clip_u8, bool_to_u8, debug_imwrite
 
 cross33 = cv2.getStructuringElement(cv2.MORPH_CROSS, (3, 3))
 rect33 = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
@@ -75,7 +75,7 @@ def ntirogiannis2014(im):
     strokes = fast_stroke_width(O)
     debug_imwrite('strokes.png', normalize_u8(strokes.clip(0, 10)))
     SW = int(round(strokes.sum() / np.count_nonzero(strokes)))
-    print 'SW =', SW
+    print('SW =', SW)
 
     BG_count = np.count_nonzero(O)
     FG_count = O.size - BG_count
@@ -93,7 +93,7 @@ def ntirogiannis2014(im):
 
     C = -50 * np.log10((FG_avg + FG_std) / (BG_avg - BG_std))
     k = -0.2 - 0.1 * np.floor(C / 10)
-    print 'sauvola:', C, k
+    print('sauvola:', C, k)
     local = sauvola(N, window_size=2 * SW + 1, k=k)
     horiz = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 1))
     vert = cv2.getStructuringElement(cv2.MORPH_RECT, (1, 5))
@@ -195,7 +195,7 @@ def row_zero_run_lengths(row):
     return run_ends - run_starts
 
 def horiz_zero_run_lengths(im):
-    return np.hstack(map(row_zero_run_lengths, im))
+    return np.hstack(list(map(row_zero_run_lengths, im)))
 
 def yan(im, alpha=0.4):
     im_h, im_w = im.shape
@@ -209,7 +209,7 @@ def yan(im, alpha=0.4):
     candidates, = np.where(run_length_hist[argmax:argmax+3] >
                            run_length_hist[argmax] * .8)
     stroke_width = candidates.max() + argmax
-    print 'stroke width:', stroke_width
+    print('stroke width:', stroke_width)
 
     size = 2 * stroke_width + 1
     means = cv2.blur(im, (size, size),
@@ -308,7 +308,7 @@ def lu2010(im):
     H, _ = np.histogram(nonzero_distances_row(E_inv), np.arange(im_h / 100))
     H[1] = 0  # don't use adjacent pix
     W = H.argmax()
-    print 'stroke width:', W
+    print('stroke width:', W)
     size = 2 * W
     N_min = W
 
@@ -348,7 +348,7 @@ def su2013(im, gamma=0.25):
     C = diff.astype(np.float32) / (I_max + I_min + 1e-16)
 
     alpha = (im.std() / 128.0) ** gamma
-    print 'alpha:', alpha
+    print('alpha:', alpha)
     C_a = alpha * C + (1 - alpha) * diff
 
     _, C_a_bw = cv2.threshold(C_a, 0, 255, cv2.THRESH_BINARY | cv2.THRESH_OTSU)

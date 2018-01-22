@@ -9,12 +9,12 @@ from multiprocessing.pool import Pool
 from os.path import join, isfile
 from subprocess import check_call
 
-import algorithm
-from binarize import binarize, adaptive_otsu
-import collate
-from geometry import Crop
-from lib import debug_imwrite
-import lib
+from . import algorithm
+from .binarize import binarize, adaptive_otsu
+from . import collate
+from .geometry import Crop
+from .lib import debug_imwrite
+from . import lib
 
 def draw_crop(im, crop, color, thickness=2):
     if not lib.debug: return
@@ -37,7 +37,7 @@ def split_crops(crops):
             quantity = x2 - current_r
             argmax = idx
 
-    print 'split:', argmax, 'out of', len(crops), '@', current_r
+    print('split:', argmax, 'out of', len(crops), '@', current_r)
 
     return [l for l in (crops[:argmax + 1], crops[argmax + 1:]) if l]
 
@@ -63,7 +63,7 @@ def crop(im, bw, split=True):
     masked_strokes = np.ma.masked_where(mask ^ 255, stroke_widths)
     strokes_mean = masked_strokes.mean()
     strokes_std = masked_strokes.std()
-    print 'overall: mean:', strokes_mean, 'std:', strokes_std
+    print('overall: mean:', strokes_mean, 'std:', strokes_std)
 
     debug = cv2.cvtColor(im, cv2.COLOR_GRAY2RGB)
     line_crops = []
@@ -82,9 +82,9 @@ def crop(im, bw, split=True):
             # print 'mean:', masked_strokes.mean(), 'std:', masked_strokes.std()
             mean = masked_strokes.mean()
             if mean < strokes_mean - strokes_std:
-                print 'skipping{: 5d}{: 5d} {:.03f} {:.03f}'.format(
+                print('skipping{: 5d}{: 5d} {:.03f} {:.03f}'.format(
                     x, y, mean, masked_strokes.std()
-                )
+                ))
                 draw_box(debug, c, (0, 0, 255), 2)
             else:
                 draw_box(debug, c, (0, 255, 0), 2)
@@ -94,7 +94,7 @@ def crop(im, bw, split=True):
         line_crops.append(line_crop)
 
     if not line_crops:
-        print 'WARNING: no lines in image.'
+        print('WARNING: no lines in image.')
         return AH, lines, []
 
     line_lefts = np.array([lc.x0 for lc in line_crops])
@@ -114,9 +114,8 @@ def crop(im, bw, split=True):
     debug_imwrite("line_debug.png", line_crop_debug)
     debug_imwrite("debug.png", debug)
 
-    line_crops = filter(lambda lc: lc.nonempty() and \
-                        not np.all(lc.apply(bw) == 255),
-                        good_line_crops)
+    line_crops = [lc for lc in good_line_crops if lc.nonempty() and \
+                        not np.all(lc.apply(bw) == 255)]
 
     if not line_crops:
         return AH, lines, [Crop.full(im)]
@@ -135,7 +134,7 @@ def process_image(original, dpi):
     # image height should be about 10 inches. round to 100
     if not dpi:
         dpi = int(round(im_h / 1100.0) * 100)
-        print 'detected dpi:', dpi
+        print('detected dpi:', dpi)
     split = im_w > im_h # two pages
 
     bw = binarize(original, adaptive_otsu, resize=1.0)
@@ -159,19 +158,20 @@ def process_image(original, dpi):
 
     return dpi, outimgs
 
-def process_file((inpath, outdir, dpi)):
+def process_file(xxx_todo_changeme):
+    (inpath, outdir, dpi) = xxx_todo_changeme
     outfiles = glob.glob('{}/{}_*{}'.format(outdir, inpath[:-4], extension))
     if outfiles:
-        print 'skipping', inpath
+        print('skipping', inpath)
         return outfiles
     else:
-        print 'processing', inpath
+        print('processing', inpath)
 
     original = cv2.imread(inpath, cv2.IMREAD_UNCHANGED)
     dpi, outimgs = process_image(original, dpi)
     for idx, outimg in enumerate(outimgs):
         outfile = '{}/{}_{}{}'.format(outdir, inpath[:-4], idx, extension)
-        print '    writing', outfile
+        print('    writing', outfile)
         cv2.imwrite(outfile, outimg)
         check_call(['tiffset', '-s', '282', str(dpi), outfile])
         check_call(['tiffset', '-s', '283', str(dpi), outfile])
@@ -208,30 +208,29 @@ def run(args):
 
     indirs = map_fn(make_indir, args.indirs)
     paths = [[join(indir, fn) for fn in os.listdir(indir)] for indir in indirs]
-    files = filter(lambda f: re.search('.(png|jpg|tif)$', f),
-                sum(paths, []))
-    files.sort(key=lambda f: map(int, re.findall('[0-9]+', f)))
+    files = [f for f in sum(paths, []) if re.search('.(png|jpg|tif)$', f)]
+    files.sort(key=lambda f: list(map(int, re.findall('[0-9]+', f))))
     im = cv2.imread(files[0], cv2.IMREAD_UNCHANGED)
 
     for d in indirs:
         if not os.path.isdir(join(args.outdir, d)):
             os.makedirs(join(args.outdir, d))
 
-    outfiles = map_fn(process_file, zip(files,
+    outfiles = map_fn(process_file, list(zip(files,
                         [args.outdir] * len(files),
-                        [args.dpi] * len(files)))
+                        [args.dpi] * len(files))))
 
     outfiles = sum(outfiles, [])
-    outfiles.sort(key=lambda f: map(int, re.findall('[0-9]+', f)))
+    outfiles.sort(key=lambda f: list(map(int, re.findall('[0-9]+', f))))
 
     outtif = join(args.outdir, 'out.tif')
     outpdf = join(args.outdir, 'out.pdf')
     if not isfile(outpdf):
         if not isfile(outtif):
-            print 'making tif:', outtif
+            print('making tif:', outtif)
             check_call(['tiffcp'] + outfiles + [outtif])
 
-        print 'making pdf:', outpdf
+        print('making pdf:', outpdf)
         check_call([
             'tiff2pdf', '-q', '100', '-j', '-p', 'letter',
             '-o', outpdf, outtif

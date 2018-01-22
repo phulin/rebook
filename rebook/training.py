@@ -16,11 +16,11 @@ from scipy.linalg import solve_triangular
 
 import lib
 
-from feature_sign import feature_sign_search
+# from feature_sign import feature_sign_search
 
-chars = u'abcdefghijklmnopqrstuvwxyz' + \
-    u'ABCDEFGHIJKLMNOPQRSTUVWXYZ' + \
-    u'1234567890.\'",§¶()-;:'
+chars = 'abcdefghijklmnopqrstuvwxyz' + \
+    'ABCDEFGHIJKLMNOPQRSTUVWXYZ' + \
+    '1234567890.\'",§¶()-;:'
 
 LO_SIZE = 28
 HI_SIZE = 2 * LO_SIZE
@@ -91,16 +91,16 @@ def optimize_dictionary(X_T, S_T, B_T, Lam_0=None):
 
     # last_B_T = None
     Lam_vec = np.ones(S_T.shape[1]) if Lam_0 is None else Lam_0.copy()
-    print 'current D:', D(Lam_vec)
+    print('current D:', D(Lam_vec))
     Lam_vec, _, _ = scipy.optimize.fmin_l_bfgs_b(
         func=lambda x: -D(x),
         bounds=[(0, np.inf) for l in Lam_vec],
         fprime=lambda x: -grad(x),
         x0=Lam_vec
     )
-    print 'final D:', D(Lam_vec)
+    print('final D:', D(Lam_vec))
     B_T[...] = B(Lam_vec)
-    print B_T
+    print(B_T)
 
     return Lam_vec
 
@@ -148,8 +148,8 @@ def feature_sign_search_vec(Y_T, X_T, A_T, gamma):
     L2_partials_abs = np.abs(L2_partials)
 
     while True:
-        print
-        print '==== STEP 2 ===='
+        print()
+        print('==== STEP 2 ====')
 
         L2_partials_abs[np.abs(X) >= 1e-7] = 0  # rule out zero elements of X
         Is = L2_partials_abs.argmax(axis=0)  # max for each column
@@ -158,10 +158,10 @@ def feature_sign_search_vec(Y_T, X_T, A_T, gamma):
         index = (Is[activate_rows], activate_rows)
         active_set[index] = True
         theta[index] = -np.sign(L2_partials[index])
-        print 'mean active:', active_set.sum(axis=0).mean()
-        print 'activating rows:', activate_rows.shape[0]
+        print('mean active:', active_set.sum(axis=0).mean())
+        print('activating rows:', activate_rows.shape[0])
         if activate_rows.shape[0] == 0:
-            print 'WARNING: activating nothing'
+            print('WARNING: activating nothing')
         assert last_Is is None or \
             not np.all(last_Is == Is[activate_rows])
         last_Is = Is[activate_rows]
@@ -170,8 +170,8 @@ def feature_sign_search_vec(Y_T, X_T, A_T, gamma):
         first_step_2 = False
 
         while True:
-            print '---- STEP 3 ----'
-            print 'working rows:', working_rows.shape[0]
+            print('---- STEP 3 ----')
+            print('working rows:', working_rows.shape[0])
 
             Q = A_T_Y[:, working_rows] - gamma / 2 * theta[:, working_rows]
             X_working = X[:, working_rows]
@@ -220,8 +220,8 @@ def feature_sign_search_vec(Y_T, X_T, A_T, gamma):
             count_sign_changes = sign_changes.sum(axis=0)
             max_sign_changes = count_sign_changes.max()
             has_sign_changes, = np.nonzero(count_sign_changes > 0)
-            print 'max sign changes:', max_sign_changes
-            print 'rows with sign changes:', has_sign_changes.shape[0]
+            print('max sign changes:', max_sign_changes)
+            print('rows with sign changes:', has_sign_changes.shape[0])
 
             if max_sign_changes > 0:
                 sign_changes = sign_changes[:, has_sign_changes]
@@ -307,7 +307,7 @@ def feature_sign_search_vec(Y_T, X_T, A_T, gamma):
             # only look at max of nonzero coefficients.
             f_partials[zero_coeffs] = 0
             row_highest_nz_partial = np.abs(f_partials).max(axis=0)
-            print 'highest nonzero partial:', row_highest_nz_partial.max()
+            print('highest nonzero partial:', row_highest_nz_partial.max())
             if max_sign_changes == 0 or row_highest_nz_partial.max() < 1e-7:
                 break
 
@@ -316,14 +316,14 @@ def feature_sign_search_vec(Y_T, X_T, A_T, gamma):
         np.save('fss_inter.npy', X.T)
 
         objective = np.square(Y - dot(A, X)).sum() + gamma * np.abs(X).sum()
-        print 'CURRENT OBJECTIVE:', objective
+        print('CURRENT OBJECTIVE:', objective)
         assert objective < 1e11
 
         zero_coeffs = np.abs(X) < 1e-7
         L2_partials[:, working_rows] = L2_partials_working
         L2_partials_abs[:, working_rows] = np.abs(L2_partials_working)
         highest_zero_partial = L2_partials_abs[zero_coeffs].max()
-        print 'highest zero partial:', highest_zero_partial
+        print('highest zero partial:', highest_zero_partial)
         if highest_zero_partial <= gamma * 1.01:
             break
 
@@ -349,19 +349,19 @@ def training_data(font_path, W_l, W_h):
     lo_patches = patches(lo_res, W_l, 2)[patch_centers]
     hi_patches = patches(hi_res, W_h, 4)[patch_centers]
     t = lo_patches.shape[0]
-    print 'patches:', t
+    print('patches:', t)
 
-    print lo_patches[2000]
-    print hi_patches[2000]
+    print(lo_patches[2000])
+    print(hi_patches[2000])
 
     lo_patches_vec = lo_patches.reshape(t, W_l * W_l).astype(np.float64)
     print_dict('lo_sq.png', lo_patches_vec)
     lo_patches_vec -= lo_patches_vec.mean(axis=1)[:, newaxis]
-    print lo_patches_vec[2000]
+    print(lo_patches_vec[2000])
     hi_patches_vec = hi_patches.reshape(t, W_h * W_h).astype(np.float64)
     print_dict('hi_sq.png', hi_patches_vec)
     hi_patches_vec -= hi_patches_vec.mean(axis=1)[:, newaxis]
-    print hi_patches_vec[2000]
+    print(hi_patches_vec[2000])
 
     coupled_patches = np.concatenate([
         lo_patches_vec / W_l,
@@ -400,7 +400,7 @@ def train(argv):
         D_T /= norm(D_T, axis=1)[:, newaxis]
         np.save('dict.npy', D_T)
 
-    print 'shapes:', X_T.shape, Z_T.shape, D_T.shape
+    print('shapes:', X_T.shape, Z_T.shape, D_T.shape)
 
     Lam_last = None
     D_T_last = None
@@ -420,8 +420,8 @@ def train(argv):
 
         if D_T_last is not None:
             relative_err = abs(D_T - D_T_last).mean() / abs(D_T_last).mean()
-            print 'relative error:', relative_err
-            if relative_err < 1e-4:
+            print('relative error:', relative_err)
+            if relative_err < 1e-6:
                 break
         D_T_last = D_T.copy()
 
@@ -431,16 +431,16 @@ def train(argv):
         highest = Z_T.argmax()
         weight = Z_T.flat[highest]
         patch_X, patch_D = np.unravel_index(highest, Z_T.shape)
-        print 'highest weight:', weight
-        print weight * D_T[patch_D, :W_l * W_l].reshape(W_l, W_l)
-        print weight * D_T[patch_D, W_l * W_l:].reshape(W_h, W_h)
-        print X_T[patch_X, :W_l * W_l].reshape(W_l, W_l)
-        print X_T[patch_X, W_h * W_h:].reshape(W_h, W_h)
-        print dot(Z_T[patch_X], D_T)[:W_l * W_l]
+        print('highest weight:', weight)
+        print(weight * D_T[patch_D, :W_l * W_l].reshape(W_l, W_l))
+        print(weight * D_T[patch_D, W_l * W_l:].reshape(W_h, W_h))
+        print(X_T[patch_X, :W_l * W_l].reshape(W_l, W_l))
+        print(X_T[patch_X, W_l * W_l:].reshape(W_h, W_h))
+        print(dot(Z_T[patch_X], D_T)[:W_l * W_l])
 
         diff = (X_T - dot(Z_T, D_T)).reshape(-1)
         objective = dot(diff, diff).sum() + lam * abs(Z_T).sum()
-        print '\nTOTAL OBJECTIVE VALUE:', objective
+        print('\nTOTAL OBJECTIVE VALUE:', objective)
 
 if __name__ == '__main__':
     lib.debug = True

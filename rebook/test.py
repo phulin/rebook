@@ -4,8 +4,8 @@ import sys
 import numpy as np
 import matplotlib.pyplot as plt
 
-import binarize
-from algorithm import text_contours, dewarp
+from . import binarize
+from .algorithm import text_contours, dewarp
 
 inpath = sys.argv[1]
 original = cv2.imread(inpath, cv2.CV_LOAD_IMAGE_GRAYSCALE)
@@ -86,14 +86,14 @@ transformed = [('Original', original)]
 images = [('Original', original)]
 
 for title, transform in transforms:
-    print 'Applying', title
+    print('Applying', title)
     transformed.append((title, transform(images[-1][1])))
 
 # images = transformed
 
 _, last_image = images[-1]
 for title, option in options:
-    print 'Applying', title
+    print('Applying', title)
     images.append((title, option(last_image)))
 
 cv2.imwrite('out2.png', images[-1][1])

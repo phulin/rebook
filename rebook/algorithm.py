@@ -4,9 +4,9 @@ import math
 import numpy as np
 # import numpy.polynomial.polynomial as poly
 
-import lib
-from lib import debug_imwrite, is_bw
-from letters import Letter, TextLine
+from . import lib
+from .lib import debug_imwrite, is_bw
+from .letters import Letter, TextLine
 
 cross33 = cv2.getStructuringElement(cv2.MORPH_CROSS, (3, 3))
 def gradient(im):
@@ -176,10 +176,7 @@ def word_contours(AH, im):
     words = top_contours(contours, hierarchy)
     word_boxes = [tuple([word] + list(cv2.boundingRect(word))) for word in words]
     # Slightly tuned from paper (h < 3 * AH and h < AH / 4)
-    word_boxes = filter(
-        lambda (_, x, y, w, h): h < 3 * AH and h > AH / 3 and w > AH / 3,
-        word_boxes
-    )
+    word_boxes = [__x_y_w_h for __x_y_w_h in word_boxes if __x_y_w_h[4] < 3 * AH and __x_y_w_h[4] > AH / 3 and __x_y_w_h[3] > AH / 3]
 
     return word_boxes
 
@@ -199,7 +196,7 @@ def letter_contours(AH, im):
         lib.debug_imwrite('letters.png', debug)
 
     # Slightly tuned from paper (h < 3 * AH and h < AH / 4)
-    letter_boxes = filter(lambda t: valid_letter(AH, *t.tuple()), letter_boxes)
+    letter_boxes = [t for t in letter_boxes if valid_letter(AH, *t.tuple())]
 
     return letter_boxes
 
@@ -227,7 +224,7 @@ def horizontal_lines(AH, im):
 
 @lib.timeit
 def collate_lines(AH, word_boxes):
-    word_boxes = sorted(word_boxes, key=lambda (c, x, y, w, h): x)
+    word_boxes = sorted(word_boxes, key=lambda c_x_y_w_h: c_x_y_w_h[1])
     lines = []
     for word_box in word_boxes:
         _, x1, y1, w1, h1 = word_box
@@ -242,7 +239,7 @@ def collate_lines(AH, word_boxes):
                 candidates.append((x1 - x0p - w0p + abs(y1 - y0p), l))
 
         if candidates:
-            candidates.sort(key=lambda (d, l): d)
+            candidates.sort(key=lambda d_l: d_l[0])
             _, line = candidates[0]
             line.append(word_box)
             # print "  selected:", x, y, w, h
@@ -253,7 +250,7 @@ def collate_lines(AH, word_boxes):
 
 @lib.timeit
 def collate_lines_2(AH, word_boxes):
-    word_boxes = sorted(word_boxes, key=lambda (c, x, y, w, h): x)
+    word_boxes = sorted(word_boxes, key=lambda c_x_y_w_h1: c_x_y_w_h1[1])
     lines = []
     for word_box in word_boxes:
         _, x1, y1, w1, h1 = word_box
@@ -285,7 +282,7 @@ def dewarp_text(im):
     im_h, im_w = im.shape
 
     AH = dominant_char_height(im)
-    print 'AH =', AH
+    print('AH =', AH)
 
     word_boxes = word_contours(im)
     lines = collate_lines(AH, word_boxes)
@@ -305,8 +302,7 @@ def dewarp_text(im):
     widths = np.array([x2_ - x1_ for x1_, y1_, x2_, y2_ in line_coords])
     median_width = np.median(widths)
 
-    line_coords = filter(lambda (x1, y1, x2, y2): x2 - x1 > median_width * 0.8,
-                         line_coords)
+    line_coords = [x1_y1_x2_y2 for x1_y1_x2_y2 in line_coords if x1_y1_x2_y2[2] - x1_y1_x2_y2[0] > median_width * 0.8]
 
     debug = cv2.cvtColor(im, cv2.COLOR_GRAY2BGR)
     for _, x, y, w, h in word_boxes:
@@ -347,11 +343,11 @@ def safe_rotate(im, angle):
     debug_imwrite('prerotated.png', im)
     im_h, im_w = im.shape
     if abs(angle) > math.pi / 4:
-        print "warning: too much rotation"
+        print("warning: too much rotation")
         return im
 
     angle_deg = angle * 180 / math.pi
-    print 'rotating to angle:', angle_deg, 'deg'
+    print('rotating to angle:', angle_deg, 'deg')
 
     im_h_new = im_w * abs(math.sin(angle)) + im_h * math.cos(angle)
     im_w_new = im_h * abs(math.sin(angle)) + im_w * math.cos(angle)

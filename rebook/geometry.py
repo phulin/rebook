@@ -2,6 +2,7 @@ import cv2
 import numpy as np
 
 from numpy.polynomial.polynomial import Polynomial as P
+from functools import reduce
 
 BLUE = (255, 0, 0)
 

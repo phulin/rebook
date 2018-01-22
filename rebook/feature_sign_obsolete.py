@@ -315,7 +315,7 @@ def feature_sign_search(dictionary, signals, sparsity, max_iter=1000,
         orig_sol = solution
         solution = np.atleast_2d(solution)
     # Solve each minimization in sequence.
-    for row, (signal, sol) in enumerate(izip(signals, solution)):
+    for row, (signal, sol) in enumerate(zip(signals, solution)):
         _, iters = _feature_sign_search_single(dictionary, signal, sparsity,
                                                max_iter, sol)
         if iters >= max_iter:

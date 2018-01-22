@@ -2,7 +2,7 @@ import cv2
 import itertools
 import numpy as np
 
-from geometry import Line
+from .geometry import Line
 
 class Letter(object):
     def __init__(self, c, x, y, w, h):

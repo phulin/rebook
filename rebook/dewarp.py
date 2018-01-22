@@ -13,13 +13,13 @@ from scipy import optimize as opt
 from scipy.ndimage import grey_dilation
 from skimage.measure import ransac
 
-import algorithm
-import binarize
-import collate
-from geometry import Crop, Line, Line3D
-from letters import TextLine
-import lib
-import newton
+from . import algorithm
+from . import binarize
+from . import collate
+from .geometry import Crop, Line, Line3D
+from .letters import TextLine
+from . import lib
+from . import newton
 
 BLUE = (255, 0, 0)
 GREEN = (0, 255, 0)
@@ -52,7 +52,7 @@ def peak_points(l, AH):
 
     delta = AH / 2
     peaks = grey_dilation(bottom, size=2 * delta + 1)
-    bottom_points = np.array(zip(range(width), bottom))
+    bottom_points = np.array(list(zip(list(range(width)), bottom)))
     peak_points = bottom_points[bottom_points[:, 1] == peaks]
     return peak_points
 
@@ -90,7 +90,7 @@ def merge_lines(AH, lines):
     #     trace_baseline(debug, l, BLUE)
     # lib.debug_imwrite('merged.png', debug)
 
-    print 'original lines:', len(lines), 'merged lines:', len(out_lines)
+    print('original lines:', len(lines), 'merged lines:', len(out_lines))
     return out_lines
 
 @lib.timeit
@@ -205,7 +205,7 @@ def arc_length_points(xs, ys, n_points):
     D = interpolate.interp1d(cumulative_arc, arc_points, assume_sorted=True)
 
     total_arc = cumulative_arc[-1]
-    print 'total D arc length:', total_arc
+    print('total D arc length:', total_arc)
     s_domain = np.linspace(0, total_arc, n_points)
     return D(s_domain), total_arc
 
@@ -226,7 +226,7 @@ def estimate_directrix(lines, v, n_points_w):
     C = C_points.T.mean(axis=0)
 
     theta = acos(f / sqrt(vx ** 2 + vy ** 2 + f ** 2))
-    print 'theta:', theta
+    print('theta:', theta)
     A = np.array([
         [1, C[0] / f * -sin(theta)],
         [0, cos(theta) - C[1] / f * sin(theta)]
@@ -284,8 +284,8 @@ def aspect_ratio(im, lines, D, v, O):
 
     lp_img = abs(D[0][-1] - D[0][0])
     wp_img = norm(np.diff(D.T, axis=0), axis=1).sum()
-    print 'h_img:', h_img, 'l\'_img:', lp_img, 'alpha:', alpha
-    print 'l_img:', l_img, 'w\'_img:', wp_img, 'beta:', beta
+    print('h_img:', h_img, 'l\'_img:', lp_img, 'alpha:', alpha)
+    print('l_img:', l_img, 'w\'_img:', wp_img, 'beta:', beta)
     r = h_img * lp_img * cos(alpha) / (l_img * wp_img * cos(alpha + beta))
 
     return r
@@ -357,7 +357,7 @@ def generate_mesh(all_lines, lines, C_arc, v, n_points_h):
     debug = cv2.cvtColor(bw, cv2.COLOR_GRAY2BGR)
     for l in result[::50]:
         for p in l[::50]:
-            cv2.circle(debug, tuple(p.astype(long)), 6, BLUE, -1)
+            cv2.circle(debug, tuple(p.astype(int)), 6, BLUE, -1)
     trace_baseline(debug, C0, RED)
     trace_baseline(debug, C1, RED)
     lib.debug_imwrite('mesh.png', debug)
@@ -478,9 +478,9 @@ def full_lines(AH, lines, v):
 
 def get_AH_lines(im):
     AH = algorithm.dominant_char_height(im)
-    print 'AH =', AH
+    print('AH =', AH)
     letters = algorithm.letter_contours(AH, im)
-    print 'collating...'
+    print('collating...')
     all_lines = lib.timeit(collate.collate_lines)(AH, letters)
     all_lines.sort(key=lambda l: l[0].y)
 
@@ -512,7 +512,7 @@ def vanishing_point(lines, v0, O):
 
     valid_lines = [C0] + compress(others, valid_mask)
     derivs = [line.model.deriv() for line in valid_lines]
-    print 'valid lines:', len(others)
+    print('valid lines:', len(others))
 
     convergences = []
     for longitude in longitudes:
@@ -556,10 +556,10 @@ def dewarp(orig):
 
     O = np.array((im_w / 2.0, im_h / 2.0))
     v = v0
-    print 'vanishing point:', v
+    print('vanishing point:', v)
     for i in range(5):
         v, L = vanishing_point(lines, v, O)
-        print 'vanishing point:', v
+        print('vanishing point:', v)
 
     lines = full_lines(AH, lines, v)
 
@@ -567,14 +567,14 @@ def dewarp(orig):
     D, C_arc = estimate_directrix(lines, v, box.w)
 
     r = aspect_ratio(im, lines, D, v, O)
-    print 'aspect ratio H/W:', r
-    print 'fixing to 1.7'
+    print('aspect ratio H/W:', r)
+    print('fixing to 1.7')
     r = 1.7  # TODO: fix
 
-    print 'generating mesh...'
+    print('generating mesh...')
     mesh = generate_mesh(all_lines, lines, C_arc, v, r * box.w)
 
-    print 'dewarping...'
+    print('dewarping...')
     dewarped = correct_geometry(orig, mesh)
 
     # print 'binarizing...'
@@ -666,7 +666,7 @@ def E_str_packed(args, mid_points, line_points):
 
 def E_0(*args):
     result = E_str_packed(*args)
-    print 'norm:', norm(result)
+    print('norm:', norm(result))
     return result
 
 def dR_dthetai(theta, R, i):
@@ -773,22 +773,22 @@ def debug_jac(theta, R, g, l_m, line_points, line_ts_surface):
     all_ts = np.concatenate([ts for ts, _ in line_ts_surface])
     all_surface = np.concatenate([surface for _, surface in line_ts_surface], axis=1)
 
-    print dE_str_dtheta(theta, R, dR, g, gp, all_points, all_ts, all_surface).T
+    print(dE_str_dtheta(theta, R, dR, g, gp, all_points, all_ts, all_surface).T)
     for i in range(3):
         delta = np.zeros(3)
         inc = norm(theta) / 4096
         delta[i] = inc
         diff = E_str(theta + delta, g, l_m, line_points) - E_str(theta - delta, g, l_m, line_points)
-        print diff / (2 * inc)
+        print(diff / (2 * inc))
 
-    print dE_str_dam(theta, R, g, gp, all_points, all_ts, all_surface).T
+    print(dE_str_dam(theta, R, g, gp, all_points, all_ts, all_surface).T)
     for i in range(1, DEGREE + 1):
         delta = np.zeros(DEGREE + 1)
         inc = g.coef[i] / 4096
         delta[i] = inc
         diff = E_str(theta, Poly(g.coef + delta), l_m, line_points) \
             - E_str(theta, Poly(g.coef - delta), l_m, line_points)
-        print diff / (2 * inc)
+        print(diff / (2 * inc))
 
 def E_align(theta, g, align, mid_points):
     R = R_theta(theta)
@@ -850,7 +850,7 @@ def E_2(*args):
     E_str_out = E_str_packed(*args)
     E_align_out = LAMBDA_2 * E_align_packed(*args)
     result = np.concatenate([E_str_out, E_align_out])
-    print 'norm:', norm(result), '=', norm(E_str_out), '+', norm(E_align_out)
+    print('norm:', norm(result), '=', norm(E_str_out), '+', norm(E_align_out))
     return result
 
 def Jac_E_2(*args):
@@ -889,13 +889,13 @@ def make_mesh_2d(all_lines, O, R, g):
     debug_print_points('corners.png', corners_2d)
 
     box_XYZ = Crop.from_points(corners_XYZ).expand(0.01)
-    print 'box_XYZ:', box_XYZ
+    print('box_XYZ:', box_XYZ)
 
     # 70th percentile line width a good guess
     n_points_w = np.percentile(np.array([line.width() for line in all_lines]), 70)
     mesh_XYZ_x = np.linspace(box_XYZ.x0, box_XYZ.x1, 400)
     mesh_XYZ_z = g(mesh_XYZ_x)
-    print 'Zs:', mesh_XYZ_z[0], mesh_XYZ_z[-1]
+    print('Zs:', mesh_XYZ_z[0], mesh_XYZ_z[-1])
     mesh_XYZ_xz_arc, total_arc = arc_length_points(mesh_XYZ_x, mesh_XYZ_z,
                                                    n_points_w)
     mesh_XYZ_x_arc, _ = mesh_XYZ_xz_arc
@@ -906,7 +906,7 @@ def make_mesh_2d(all_lines, O, R, g):
     mesh_XYZ_y = np.linspace(box_XYZ.y0, box_XYZ.y1, n_points_h)
     mesh_XYZ = make_mesh_XYZ(mesh_XYZ_x_arc, mesh_XYZ_y, g)
     mesh_2d = gcs_to_image(mesh_XYZ, O, R)
-    print 'mesh:', Crop.from_points(mesh_2d)
+    print('mesh:', Crop.from_points(mesh_2d))
 
     debug_print_points('mesh1.png', mesh_2d, step=20)
 
@@ -943,7 +943,7 @@ def initial_args(lines, O, theta_0=(1e-7, 1e-7, 1e-7)):
 
     _, (Xs, _, _) = newton.t_i_k(R_0, g_0, mid_points.reshape(3, -1), T0)
     align_0 = Xs.reshape(2, -1).mean(axis=1)  # to LR, N
-    print 'align_0:', align_0
+    print('align_0:', align_0)
 
     return (np.hstack([theta_0, a_m_0, align_0, l_m_0]),
             (mid_points, line_points))
@@ -965,7 +965,7 @@ def kim2014(orig):
     vx, vy = estimate_vanishing(AH, lines) - O
 
     theta_0 = [atan2(-vy, f) - pi / 2, 0, 0]
-    print 'theta_0:', theta_0
+    print('theta_0:', theta_0)
 
     args_0, (mid_points, line_points) = \
         initial_args(lines, O, theta_0=theta_0)
@@ -980,11 +980,11 @@ def kim2014(orig):
         x_scale='jac',
     )
     theta, a_m, _, l_m = unpack_args(result.x)
-    print '*** DONE ***'
-    print 'final norm:', norm(result.fun)
-    print 'theta:', theta
-    print 'a_m:', np.hstack([[0], a_m])
-    print 'l_m:', l_m
+    print('*** DONE ***')
+    print('final norm:', norm(result.fun))
+    print('theta:', theta)
+    print('a_m:', np.hstack([[0], a_m]))
+    print('l_m:', l_m)
 
     R = R_theta(theta)
     g = Poly(np.hstack([[0], a_m]))
@@ -1023,12 +1023,12 @@ def kim2014(orig):
         x_scale='jac',
     )
     theta, a_m, align, l_m = unpack_args(result.x)
-    print '*** DONE ***'
-    print 'final norm:', norm(result.fun)
-    print 'theta:', theta
-    print 'a_m:', np.hstack([[0], a_m])
-    print 'l_m:', l_m
-    print 'alignment:', (result.fun[-2 * mid_points.shape[-1]:] / LAMBDA_2).astype(int)
+    print('*** DONE ***')
+    print('final norm:', norm(result.fun))
+    print('theta:', theta)
+    print('a_m:', np.hstack([[0], a_m]))
+    print('l_m:', l_m)
+    print('alignment:', (result.fun[-2 * mid_points.shape[-1]:] / LAMBDA_2).astype(int))
 
     R = R_theta(theta)
     g = Poly(np.hstack([[0], a_m]))
