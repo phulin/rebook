@@ -61,7 +61,7 @@ def upscale(path, data_dir, factor):
     hi_float = np.zeros((factor * im_h, factor * im_w), dtype=np.float64)
     dest_patches = patches(hi_float, W_h, 2 * step)
     patch_count = np.zeros((factor * im_h, factor * im_w), dtype=int)
-    count_patches = patches(patch_count, Wrh, 2 * step)
+    count_patches = patches(patch_count, W_h, 2 * step)
     for i, row in enumerate(hi_patches):
         for j, patch in enumerate(row):
             dest_patches[i, j] += patch

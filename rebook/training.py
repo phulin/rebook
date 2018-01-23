@@ -400,7 +400,9 @@ def blockwise_coord_descent_mapping(X_T, S_T, B_T, lam):
         S[k] = np.maximum(row, alpha) + np.minimum(row, -alpha)
 
 def blockwise_coord_descent_dict(X_T, S_T, B_T, lam):
-    G = S.dot(S_T)
+    K = B_T.shape[0]
+
+    G = S_T.T.dot(S_T)
     np.fill_diagonal(G, 0)
     W = X_T.T.dot(S_T)
 
@@ -413,7 +415,7 @@ def blockwise_coord_descent(X_T, S_T, B_T, lam):
     blockwise_coord_descent_mapping(X_T, S_T, B_T, lam)
     np.save('fss.npy', S_T)
 
-    blockwise_coord_descent_mapping(X_T, S_T, B_T, lam)
+    blockwise_coord_descent_dict(X_T, S_T, B_T, lam)
     np.save('dict.npy', B_T)
 
 def test_train():
