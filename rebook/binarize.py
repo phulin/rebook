@@ -3,10 +3,11 @@ import numpy as np
 import numpy.polynomial.polynomial as poly
 import sys
 
-from .algorithm import fast_stroke_width
-from . import inpaint
-from . import lib
-from .lib import normalize_u8, clip_u8, bool_to_u8, debug_imwrite
+import inpaint
+import lib
+
+from algorithm import fast_stroke_width
+from lib import normalize_u8, clip_u8, bool_to_u8, debug_imwrite
 
 cross33 = cv2.getStructuringElement(cv2.MORPH_CROSS, (3, 3))
 rect33 = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
@@ -51,7 +52,6 @@ def teager(im):
         - padded[2:, 1:-1] * padded[:-2, 1:-1] \
         - padded[1:-1, 2:] * padded[1:-1, :-2])
 
-@lib.timeit
 def ntirogiannis2014(im):
     im_h, _ = im.shape
     IM = cv2.erode(niblack(im, window_size=61, k=0.2), rect33)

@@ -4,9 +4,10 @@ import math
 import numpy as np
 # import numpy.polynomial.polynomial as poly
 
-from . import lib
-from .lib import debug_imwrite, is_bw
-from .letters import Letter, TextLine
+import lib
+
+from lib import debug_imwrite, is_bw
+from letters import Letter, TextLine
 
 cross33 = cv2.getStructuringElement(cv2.MORPH_CROSS, (3, 3))
 def gradient(im):

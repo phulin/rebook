@@ -22,9 +22,6 @@ chars = 'abcdefghijklmnopqrstuvwxyz' + \
     'ABCDEFGHIJKLMNOPQRSTUVWXYZ' + \
     '1234567890.\'",§¶()-;:'
 
-LO_SIZE = 28
-HI_SIZE = 2 * LO_SIZE
-
 def create_mosaic(face, size):
     face.set_pixel_sizes(0, size)
     rendered = []
@@ -38,8 +35,8 @@ def create_mosaic(face, size):
     for g in rendered:
         padding_x = 2 * size - g.shape[0]
         padding_y = 2 * size - g.shape[1]
-        padding = ((padding_x / 2, padding_x - padding_x / 2),
-                   (padding_y / 2, padding_y - padding_y / 2))
+        padding = ((padding_x // 2, padding_x - padding_x // 2),
+                   (padding_y // 2, padding_y - padding_y // 2))
         padded.append(np.pad(g, padding, 'constant'))
 
     return np.concatenate(padded, axis=1)
@@ -47,8 +44,8 @@ def create_mosaic(face, size):
 # step: distance between patches
 def patches(a, size, step=1):
     patch_count = (
-        (a.shape[0] - size) / step + 1,
-        (a.shape[1] - size) / step + 1,
+        (a.shape[0] - size) // step + 1,
+        (a.shape[1] - size) // step + 1,
     )
     return np.lib.stride_tricks.as_strided(
         a, patch_count + (size, size),
@@ -329,13 +326,14 @@ def feature_sign_search_vec(Y_T, X_T, A_T, gamma):
 
     X_T.T = X[:]
 
-def training_data(font_path, W_l, W_h):
+def training_data(font_path, font_size, W_l, W_h):
     face = freetype.Face(font_path)
 
-    hi_res = create_mosaic(face, HI_SIZE)
+    hi_res = create_mosaic(face, font_size)
     cv2.imwrite('hi.png', hi_res)
 
-    blurred = hi_res  # cv2.blur(hi_res, (5, 5))
+    blur_size = (W_l // 2) | 1
+    blurred = cv2.blur(hi_res, (blur_size, blur_size))
     lo_res = cv2.resize(blurred, (0, 0), None, 0.5, 0.5,
                         interpolation=cv2.INTER_AREA)
     cv2.imwrite('lo.png', lo_res)
@@ -351,17 +349,17 @@ def training_data(font_path, W_l, W_h):
     t = lo_patches.shape[0]
     print('patches:', t)
 
-    print(lo_patches[2000])
-    print(hi_patches[2000])
+    print(lo_patches[100])
+    print(hi_patches[100])
 
     lo_patches_vec = lo_patches.reshape(t, W_l * W_l).astype(np.float64)
     print_dict('lo_sq.png', lo_patches_vec)
     lo_patches_vec -= lo_patches_vec.mean(axis=1)[:, newaxis]
-    print(lo_patches_vec[2000])
+    print(lo_patches_vec[100])
     hi_patches_vec = hi_patches.reshape(t, W_h * W_h).astype(np.float64)
     print_dict('hi_sq.png', hi_patches_vec)
     hi_patches_vec -= hi_patches_vec.mean(axis=1)[:, newaxis]
-    print(hi_patches_vec[2000])
+    print(hi_patches_vec[100])
 
     coupled_patches = np.concatenate([
         lo_patches_vec / W_l,
@@ -372,21 +370,18 @@ def training_data(font_path, W_l, W_h):
 
     return coupled_patches
 
+@lib.timeit
 def feature_sign_search_alternating(X_T, Z_T, D_T, lam):
     feature_sign_search_vec(X_T, Z_T, D_T, lam)
     # feature_sign_search(X_T, Z_T, D_T, lam)
     np.save('fss.npy', Z_T)
-
-    diff = (X_T - dot(Z_T, D_T)).reshape(-1)
-    objective = dot(diff, diff).sum() + lam * abs(Z_T).sum()
-    print('\nTOTAL OBJECTIVE VALUE:', objective)
 
     print('optimizing dict.')
     global Lam_last
     Lam_last = optimize_dictionary(X_T, Z_T, D_T, Lam_0=Lam_last)
     np.save('dict.npy', D_T)
 
-def blockwise_coord_descent(X_T, S_T, B_T, lam):
+def blockwise_coord_descent_mapping(X_T, S_T, B_T, lam):
     alpha = lam / 2.
     K = B_T.shape[0]
 
@@ -395,12 +390,16 @@ def blockwise_coord_descent(X_T, S_T, B_T, lam):
     E = B_T.dot(X_T.T)
     S = S_T.T
 
+    print(X_T.shape)
+    print(S_T.shape)
+    print(B_T.shape)
+    print(E.shape)
     for k in range(K):
+        if k % 100 == 0: print(k)
         row = E[k] - A[k].dot(S)
         S[k] = np.maximum(row, alpha) + np.minimum(row, -alpha)
 
-    np.save('fss.npy', S_T)
-
+def blockwise_coord_descent_dict(X_T, S_T, B_T, lam):
     G = S.dot(S_T)
     np.fill_diagonal(G, 0)
     W = X_T.T.dot(S_T)
@@ -409,19 +408,28 @@ def blockwise_coord_descent(X_T, S_T, B_T, lam):
         row = W[:, k] - B_T.T.dot(G[:, k])
         B_T[k] = row / norm(row)
 
+@lib.timeit
+def blockwise_coord_descent(X_T, S_T, B_T, lam):
+    blockwise_coord_descent_mapping(X_T, S_T, B_T, lam)
+    np.save('fss.npy', S_T)
+
+    blockwise_coord_descent_mapping(X_T, S_T, B_T, lam)
     np.save('dict.npy', B_T)
 
-def train(argv):
+def test_train():
     W_l = 5  # window size
     W_h = 2 * W_l
 
-    K = 1024  # Dictionary size
+    font_size = 56
+
+    K = 512  # Dictionary size
     lam = 0.1  # weight of sparsity
 
     if os.path.isfile('training.npy'):
         X_T = np.load('training.npy')
     else:
-        X_T = training_data("/Library/Fonts/Microsoft/Constantia.ttf", W_l, W_h)
+        X_T = training_data("/Library/Fonts/Microsoft/Constantia.ttf",
+                            font_size, W_l, W_h)
         np.save('training.npy', X_T)
 
     t = X_T.shape[0]
@@ -443,21 +451,14 @@ def train(argv):
 
     global Lam_last
     Lam_last = None
-    D_T_last = None
+    last_objective = None
     for i in range(100000):
         print('\n==== ITERATION', i, '====')
         # feature_sign_search_alternating(X_T, Z_T, D_T, lam)
         blockwise_coord_descent(X_T, Z_T, D_T, lam)
 
-        if D_T_last is not None:
-            relative_err = abs(D_T - D_T_last).mean() / abs(D_T_last).mean()
-            print('relative error:', relative_err)
-            if relative_err < 1e-6:
-                break
-        D_T_last = D_T.copy()
-
-        print_dict('lo_dict{}.png'.format(i), D_T[:, :W_l * W_l])
-        print_dict('hi_dict{}.png'.format(i), D_T[:, W_l * W_l:])
+        print_dict('lo_dict.png'.format(i), D_T[:, :W_l * W_l])
+        print_dict('hi_dict.png'.format(i), D_T[:, W_l * W_l:])
 
         highest = Z_T.argmax()
         weight = Z_T.flat[highest]
@@ -473,8 +474,74 @@ def train(argv):
         objective = dot(diff, diff).sum() + lam * abs(Z_T).sum()
         print('\nTOTAL OBJECTIVE VALUE:', objective)
 
+        if last_objective is not None:
+            relative_err = abs(last_objective - objective) / last_objective
+            print('relative error:', relative_err)
+            if relative_err < 1e-4:
+                break
+        last_objective = objective
+
+def train(dest, font_path, sizes):
+    for size in sizes:
+        W_l = int(size / 3) | 1
+        W_h = 2 * W_l
+
+        K = 512  # Dictionary size
+        lam = 0.2  # weight of sparsity
+
+        dest_dir = os.path.join(dest, str(size))
+        if not os.path.isdir(dest_dir):
+            print('making directory', dest_dir)
+            os.makedirs(dest_dir)
+
+        training_file = os.path.join(dest_dir, 'training.npy')
+        dict_file = os.path.join(dest_dir, 'dict.npy')
+        mapping_file = os.path.join(dest_dir, 'mapping.npy')
+
+        if os.path.isfile(training_file):
+            X_T = np.load(training_file)
+        else:
+            X_T = training_data(font_path, size * 2, W_l, W_h)
+            np.save(training_file, X_T)
+
+        t = X_T.shape[0]
+
+        if os.path.isfile(mapping_file):
+            Z_T = np.load(mapping_file)
+        else:
+            Z_T = np.zeros((t, K), dtype=np.float64)
+
+        if os.path.isfile(dict_file):
+            D_T = np.load(dict_file)
+        else:
+            D_T = np.random.normal(size=(K, W_l * W_l + W_h * W_h)).astype(np.float64)
+            D_T /= norm(D_T, axis=1)[:, newaxis]
+            np.save(dict_file, D_T)
+
+        last_objective = None
+        for i in range(100000):
+            print('\n==== ITERATION', i, '====')
+            blockwise_coord_descent(X_T, Z_T, D_T, lam)
+            np.save(mapping_file, Z_T)
+            np.save(dict_file, D_T)
+
+            print_dict(os.path.join(dest_dir, 'lo_dict.png'), D_T[:, :W_l * W_l])
+            print_dict(os.path.join(dest_dir, 'hi_dict.png'), D_T[:, W_l * W_l:])
+
+            objective = np.square(X_T - dot(Z_T, D_T)).sum() + lam * abs(Z_T).sum()
+            print('\nTOTAL OBJECTIVE VALUE:', objective)
+
+            if last_objective is not None:
+                relative_err = abs(last_objective - objective) / last_objective
+                print('relative error:', relative_err)
+                if relative_err < 1e-4:
+                    break
+            last_objective = objective
+
 if __name__ == '__main__':
     lib.debug = True
-    lib.debug_prefix = 'training/'
+    # lib.debug_prefix = 'training/'
     np.set_printoptions(precision=3, linewidth=200)
-    train(sys.argv)
+    # these sizes should correspond to AH in scanned stuff.
+    sizes = [15, 18, 20, 22, 26, 30]
+    train(sys.argv[1], "/Library/Fonts/Microsoft/Constantia.ttf", sizes)
