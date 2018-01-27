@@ -2,6 +2,10 @@ import cv2
 import numpy as np
 import time
 
+BLUE = (255, 0, 0)
+GREEN = (0, 255, 0)
+RED = (0, 0, 255)
+
 debug = False
 debug_prefix = ''
 def debug_imwrite(path, im):
@@ -22,6 +26,9 @@ def bool_to_u8(im):
 
 def is_bw(im):
     return (im + 1 < 2).all()
+
+def int_tuple(a):
+    return tuple(np.round(a).astype(int))
 
 def timeit(method):
     def timed(*args, **kw):

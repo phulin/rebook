@@ -357,6 +357,12 @@ def su2013(im, gamma=0.25):
     # TODO: finish
     return C_a_bw
 
+def retinex(im, mu_1=0.9, mu_2=25, sigma=5):
+    G = cv2.GaussianBlur(im, (0, 0), sigma)
+    debug_imwrite('G.png', G)
+    bools = (im < mu_1 * G) & (cv2.absdiff(im, G) > mu_2)
+    return bools.astype(np.uint8)
+
 def binarize(im, algorithm=adaptive_otsu, gray=CIELab_gray, resize=1.0):
     if (im + 1 < 2).all():  # black and white
         return im
