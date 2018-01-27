@@ -25,6 +25,20 @@ Focal length is currently assumed to be that of the iPhone 7, because that’s w
 * [Su et al. 2013, Robust document image binarization technique for degraded document images](https://link.springer.com/article/10.1007%2Fs10032-010-0130-8?LI=true) (DIBCO 2013 champion)
 * [Ntirogiannis et al. 2014, A combined approach for the binarization of handwritten document images](http://www.sciencedirect.com/science/article/pii/S016786551200311X)
 
+## Text Structuring
+
+`block.py` contains some text-structuring stuff.
+
+* [Koo and Choo 2010, State estimation in a document image and its applciation in text block identification and text line extraction](https://link.springer.com/chapter/10.1007/978-3-642-15552-9_31)
+
+## Super-resolution
+
+`upscale.py` has some (incomplete) routines for single-image superresolution using text as a prior.
+
+* [Lee et al. 2007, Efficient sparse coding algorithms](http://papers.nips.cc/paper/2979-efficient-sparse-coding-algorithms.pdf)
+* [Walha et al. 2012, Super-resolution of single text image by sparse representation](http://doi.acm.org/10.1145/2432553.2432558)
+* [Liu et al. 2014, Blockwise coordinate descent schemes for sparse representation](http://ieeexplore.ieee.org/document/6854608/)
+
 ## Building
 
 Requirements: Numpy/Scipy, OpenCV (with python bindings), Cython
