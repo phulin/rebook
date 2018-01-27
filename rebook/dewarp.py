@@ -1,3 +1,5 @@
+from __future__ import print_function
+
 import cv2
 import itertools
 import numpy as np
@@ -13,13 +15,13 @@ from scipy import optimize as opt
 from scipy.ndimage import grey_dilation
 from skimage.measure import ransac
 
-from . import algorithm
-from . import binarize
-from . import collate
-from .geometry import Crop, Line, Line3D
-from .letters import TextLine
-from . import lib
-from . import newton
+import algorithm
+import binarize
+import collate
+from geometry import Crop, Line, Line3D
+from letters import TextLine
+import lib
+import newton
 
 BLUE = (255, 0, 0)
 GREEN = (0, 255, 0)
@@ -901,16 +903,25 @@ def make_mesh_2d(all_lines, O, R, g):
     mesh_XYZ_x_arc, _ = mesh_XYZ_xz_arc
 
     # TODO: think more about estimation of aspect ratio for mesh
-    n_points_h = n_points_w * box_XYZ.h / total_arc
+    # n_points_h = n_points_w * box_XYZ.h / total_arc
+    n_points_h = n_points_w * 1.7
 
     mesh_XYZ_y = np.linspace(box_XYZ.y0, box_XYZ.y1, n_points_h)
     mesh_XYZ = make_mesh_XYZ(mesh_XYZ_x_arc, mesh_XYZ_y, g)
     mesh_2d = gcs_to_image(mesh_XYZ, O, R)
+    print(mesh_2d.shape)
     print('mesh:', Crop.from_points(mesh_2d))
 
     debug_print_points('mesh1.png', mesh_2d, step=20)
 
-    return mesh_2d[:, ::-1, ::-1].transpose(1, 2, 0)
+    # make sure meshes are not reversed
+    if mesh_2d[0, :, 0].mean() > mesh_2d[0, :, -1].mean():
+        mesh_2d = mesh_2d[:, :, ::-1]
+
+    if mesh_2d[1, 0].mean() > mesh_2d[1, -1].mean():
+        mesh_2d = mesh_2d[:, ::-1, :]
+
+    return mesh_2d.transpose(1, 2, 0)
 
 def initial_args(lines, O, theta_0=(1e-7, 1e-7, 1e-7)):
     # flat surface as initial guess.

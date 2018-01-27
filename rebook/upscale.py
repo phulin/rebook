@@ -6,9 +6,10 @@ import sys
 from numpy import newaxis
 
 import binarize
+import training
 
 from algorithm import dominant_char_height
-from training import blockwise_coord_descent_mapping, patches
+from training import patches
 
 def upscale(path, data_dir, factor):
     assert factor == 2
@@ -18,6 +19,7 @@ def upscale(path, data_dir, factor):
 
     bw = binarize.binarize(im, algorithm=binarize.ntirogiannis2014)
     AH = dominant_char_height(bw)
+    print('AH =', AH)
 
     possible_AHs = np.array([int(d) for d in os.listdir(data_dir) if d.isdigit()])
     size = possible_AHs[np.abs(possible_AHs - AH).argmin()]
@@ -34,8 +36,17 @@ def upscale(path, data_dir, factor):
     lam = 0.2  # weight of sparsity. TODO: confirm same as training data.
 
     lo_patches = patches(im, W_l, step)
-    M, N, _, _ = lo_patches.shape
-    lo_patches_vec = lo_patches.reshape(M * N, W_l * W_l).astype(np.float64)
+    struct = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
+    gradient = cv2.morphologyEx(im, cv2.MORPH_GRADIENT, struct)
+    gradient_means, _ = binarize.mean_std(gradient, W_l)
+    patch_gradient = gradient_means[W_l // 2:-W_l // 2 + 1:step,
+                                    W_l // 2:-W_l // 2 + 1:step]
+    assert patch_gradient.shape == (lo_patches.shape[0], lo_patches.shape[1])
+    patch_mask = patch_gradient > np.percentile(patch_gradient, 50)
+    good_patches = np.nonzero(patch_mask)
+    cv2.imwrite('spp.png', -patch_mask.astype(np.uint8))
+
+    lo_patches_vec = lo_patches[good_patches].reshape(-1, W_l * W_l).astype(np.float64)
     means = lo_patches_vec.mean(axis=1)
     X_T = lo_patches_vec - means[:, newaxis]
     t = X_T.shape[0]
@@ -44,7 +55,7 @@ def upscale(path, data_dir, factor):
 
     last_objective = None
     while True:
-        blockwise_coord_descent_mapping(X_T, Z_T, D_T, lam)
+        training.feature_sign_search_vec(X_T, Z_T, D_T, lam)
         objective = np.square(X_T - Z_T.dot(D_T)).sum()
 
         print('\ncurrent objective:', objective)
@@ -55,21 +66,21 @@ def upscale(path, data_dir, factor):
                 break
         last_objective = objective
 
-    hi_patches_vec = Z_T.dot(D_T_coupled)[:, W_l * W_l:] + means[:, newaxis]
-    hi_patches = hi_patches_vec.reshape(M, N, W_h, W_h)
+    hi_patches = Z_T.dot(D_T_coupled)[:, W_l * W_l:] + means[:, newaxis]
 
     hi_float = np.zeros((factor * im_h, factor * im_w), dtype=np.float64)
     dest_patches = patches(hi_float, W_h, 2 * step)
     patch_count = np.zeros((factor * im_h, factor * im_w), dtype=int)
     count_patches = patches(patch_count, W_h, 2 * step)
-    for i, row in enumerate(hi_patches):
-        for j, patch in enumerate(row):
-            dest_patches[i, j] += patch
-            count_patches[i, j] += 1
+    for i, patch in enumerate(hi_patches):
+        dest_patches[good_patches[i]] += patch
+        count_patches[good_patches[i]] += 1
+    np.divide(hi_float, patch_count, hi_float, where=patch_count > 0)
 
-    hi_float /= patch_count
+    hi_lanczos = cv2.resize(im, (0, 0), None, 2., 2.,
+                            interpolation=cv2.INTER_LANCZOS4)
 
-    return hi_float
+    return np.where(patch_count > 0, hi_float, hi_lanczos).clip(0, 255).astype(np.uint8)
 
 if __name__ == '__main__':
     path = sys.argv[1]

@@ -9,12 +9,12 @@ from multiprocessing.pool import Pool
 from os.path import join, isfile
 from subprocess import check_call
 
-from . import algorithm
-from .binarize import binarize, adaptive_otsu
-from . import collate
-from .geometry import Crop
-from .lib import debug_imwrite
-from . import lib
+import algorithm
+from binarize import binarize, adaptive_otsu
+import collate
+from geometry import Crop
+from lib import debug_imwrite
+import lib
 
 def draw_crop(im, crop, color, thickness=2):
     if not lib.debug: return

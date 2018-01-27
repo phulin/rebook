@@ -390,10 +390,6 @@ def blockwise_coord_descent_mapping(X_T, S_T, B_T, lam):
     E = B_T.dot(X_T.T)
     S = S_T.T
 
-    print(X_T.shape)
-    print(S_T.shape)
-    print(B_T.shape)
-    print(E.shape)
     for k in range(K):
         if k % 100 == 0: print(k)
         row = E[k] - A[k].dot(S)

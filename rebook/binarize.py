@@ -11,6 +11,7 @@ from lib import normalize_u8, clip_u8, bool_to_u8, debug_imwrite
 
 cross33 = cv2.getStructuringElement(cv2.MORPH_CROSS, (3, 3))
 rect33 = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
+rect55 = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
 
 def hls_gray(im):
     assert len(im.shape) == 3
@@ -54,7 +55,7 @@ def teager(im):
 
 def ntirogiannis2014(im):
     im_h, _ = im.shape
-    IM = cv2.erode(niblack(im, window_size=61, k=0.2), rect33)
+    IM = cv2.erode(sauvola(im, window_size=61, k=0.2), rect55)
     debug_imwrite('niblack.png', IM)
 
     inpainted, modified = inpaint.inpaint_ng14(im, -IM)
