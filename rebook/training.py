@@ -1,14 +1,12 @@
 # coding=utf-8
 
+from __future__ import division, print_function
+
 import cv2
 import freetype
 import numpy as np
-# import numpy.ma as ma
-import sys
 
-from numpy import dot, newaxis
-from numpy.linalg import norm, pinv, solve
-from scipy.linalg import solve_triangular
+from numpy import newaxis
 
 import lib
 
@@ -38,26 +36,27 @@ def create_mosaic(face, size):
     return np.concatenate(padded, axis=1)
 
 # step: distance between patches
+# looks for image in first two axes
 def patches(a, size, step=1):
     patch_count = (
         (a.shape[0] - size) // step + 1,
         (a.shape[1] - size) // step + 1,
     )
     return np.lib.stride_tricks.as_strided(
-        a, patch_count + (size, size),
+        a, patch_count + (size, size) + a.shape[2:],
         (step * a.strides[0], step * a.strides[1]) + a.strides
     )
 
 def print_dict(filename, D_T):
     K, W_sq = D_T.shape
-    W = int(math.sqrt(W_sq))
+    W = int(np.sqrt(W_sq))
     assert W_sq == W ** 2
 
     D_T_s = D_T - np.percentile(D_T, 5)
     ratio = 255 / np.percentile(D_T_s, 95)
     patches = lib.clip_u8(ratio * D_T_s.reshape(K, W, W))
 
-    sqrtK = int(math.ceil(math.sqrt(K)))
+    sqrtK = int(np.ceil(np.sqrt(K)))
     padding = ((0, sqrtK ** 2 - K), (1, 1), (1, 1))
     patches_padded = np.pad(patches, padding, 'constant', constant_values=127)
     dict_square = patches_padded.reshape(sqrtK, sqrtK, W + 2, W + 2) \

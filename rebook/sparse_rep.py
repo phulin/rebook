@@ -1,8 +1,12 @@
+from __future__ import division, print_function
+
 import numpy as np
 from numpy import dot, newaxis
 from numpy.linalg import norm, solve
 import os
+import sys
 
+import lib
 from training import print_dict, training_data
 
 def col_square_norm(A):
@@ -376,7 +380,7 @@ def train(dest, font_path, sizes):
         W_l = int(size / 3) | 1
         W_h = 2 * W_l
 
-        K = 512  # Dictionary size
+        K = 64  # Dictionary size
         lam = 0.2  # weight of sparsity
 
         dest_dir = os.path.join(dest, str(size))

@@ -1,3 +1,5 @@
+from __future__ import division, print_function
+
 import cv2
 import numpy as np
 import time
@@ -39,3 +41,20 @@ def timeit(method):
                 (method.__name__, (te - ts) * 1000))
         return result
     return timed
+
+def mean_std(im, W):
+    s = W // 2
+    N = W * W
+
+    padded = np.pad(im, (s, s), 'reflect')
+    sum1, sum2 = cv2.integral2(padded, sdepth=cv2.CV_32F)
+
+    S1 = sum1[W:, W:] - sum1[W:, :-W] - sum1[:-W, W:] + sum1[:-W, :-W]
+    S2 = sum2[W:, W:] - sum2[W:, :-W] - sum2[:-W, W:] + sum2[:-W, :-W]
+
+    means = S1 / N
+
+    variances = S2 / N - means * means
+    stds = np.sqrt(variances.clip(0, None))
+
+    return means, stds

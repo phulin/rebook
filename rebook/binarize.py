@@ -7,7 +7,7 @@ import inpaint
 import lib
 
 from algorithm import fast_stroke_width
-from lib import normalize_u8, clip_u8, bool_to_u8, debug_imwrite
+from lib import mean_std, normalize_u8, clip_u8, bool_to_u8, debug_imwrite
 
 cross33 = cv2.getStructuringElement(cv2.MORPH_CROSS, (3, 3))
 rect33 = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
@@ -103,23 +103,6 @@ def ntirogiannis2014(im):
     # TODO: implement CC-based algorithm
     # take everything that's FG in O_eroded and niblack
     return O_eroded | local
-
-def mean_std(im, W):
-    s = W / 2
-    N = W * W
-
-    padded = np.pad(im, (s, s), 'reflect')
-    sum1, sum2 = cv2.integral2(padded, sdepth=cv2.CV_32F)
-
-    S1 = sum1[W:, W:] - sum1[W:, :-W] - sum1[:-W, W:] + sum1[:-W, :-W]
-    S2 = sum2[W:, W:] - sum2[W:, :-W] - sum2[:-W, W:] + sum2[:-W, :-W]
-
-    means = S1 / N
-
-    variances = S2 / N - means * means
-    stds = np.sqrt(variances.clip(0, None))
-
-    return means, stds
 
 @lib.timeit
 def niblack(im, window_size=61, k=0.2):
