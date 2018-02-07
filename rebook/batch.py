@@ -1,3 +1,5 @@
+from __future__ import print_function
+
 import argparse
 import cv2
 import glob
@@ -179,17 +181,29 @@ def process_file(xxx_todo_changeme):
 
     return outfiles
 
-def make_indir(path):
-    if os.path.isfile(path) and path.endswith('.pdf'):
-        dirpath = path[:-4]
-        if not os.path.isdir(dirpath):
-            os.makedirs(dirpath)
-        if not os.listdir(dirpath):
-            check_call(['pdfimages', '-png', path, join(dirpath, 'page')])
-        return dirpath
-    else:
-        assert os.path.isdir(path)
-        return path
+def pdfimages(pdf_filename):
+    assert pdf_filename.endswith('.pdf')
+    dirpath = pdf_filename[:-4]
+    if not os.path.isdir(dirpath):
+        os.makedirs(dirpath)
+    if not os.listdir(dirpath):
+        check_call(['pdfimages', '-png', pdf_filename, join(dirpath, 'page')])
+    return dirpath
+
+def sorted_numeric(strings):
+    return sorted(strings, key=lambda f: list(map(int, re.findall('[0-9]+', f))))
+
+def accumulate_paths(target, accum):
+    for path in target:
+        if os.path.isfile(path):
+            if path.endswith('.pdf'):
+                accumulate_paths([pdfimages(path)], accum)
+            elif re.match(r'.*\.(png|jpg|tif)', path):
+                accum.append(path)
+        else:
+            assert os.path.isdir(path)
+            files = [os.path.join(path, base) for base in sorted_numeric(os.listdir(path))]
+            accumulate_paths(files, accum)
 
 def run(args):
     if args.single_file:
@@ -206,13 +220,12 @@ def run(args):
     else:
         map_fn = map
 
-    indirs = map_fn(make_indir, args.indirs)
-    paths = [[join(indir, fn) for fn in os.listdir(indir)] for indir in indirs]
-    files = [f for f in sum(paths, []) if re.search('.(png|jpg|tif)$', f)]
-    files.sort(key=lambda f: list(map(int, re.findall('[0-9]+', f))))
-    im = cv2.imread(files[0], cv2.IMREAD_UNCHANGED)
+    files = []
+    accumulate_paths(args.indirs, files)
+    print(files)
 
-    for d in indirs:
+    for p in files:
+        d = os.path.dirname(p)
         if not os.path.isdir(join(args.outdir, d)):
             os.makedirs(join(args.outdir, d))
 
