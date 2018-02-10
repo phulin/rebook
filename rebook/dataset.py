@@ -14,8 +14,8 @@ out_dir = sys.argv[3]
 
 N_IMG = 1000
 theta_range = [-np.pi / 45, np.pi / 45]  # +/- 4 deg
-KERNELS = [(1, 1), (3, 3), (5, 5), (7, 3), (3, 7), (9, 1), (1, 9)]
-NOISE = 10
+KERNELS = [(1, 1), (3, 3), (5, 1), (3, 7)]
+NOISE = 15
 
 imgs_base = [fn for fn in os.listdir(sys.argv[1]) if fn.endswith('.png')]
 for i in range(N_IMG):

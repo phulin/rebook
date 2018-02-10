@@ -55,7 +55,7 @@ def teager(im):
 
 def ntirogiannis2014(im):
     im_h, _ = im.shape
-    IM = cv2.erode(sauvola(im, window_size=61, k=0.2), rect55)
+    IM = cv2.erode(sauvola(im, window_size=61, k=0.4), rect55)
     debug_imwrite('niblack.png', IM)
 
     inpainted, modified = inpaint.inpaint_ng14(im, -IM)
@@ -109,7 +109,7 @@ def niblack(im, window_size=61, k=0.2):
     means, stds = mean_std(im, window_size)
     thresh = means + k * stds
 
-    return -(im > thresh).astype(np.uint8)
+    return bool_to_u8(im > thresh)
 
 @lib.timeit
 def sauvola(im, window_size=61, k=0.2):
@@ -117,7 +117,7 @@ def sauvola(im, window_size=61, k=0.2):
     means, stds = mean_std(im, window_size)
     thresh = means * (1 + k * ((stds / 127) - 1))
 
-    return -(im > thresh).astype(np.uint8)
+    return bool_to_u8(im > thresh)
 
 def kittler(im):
     h, g = np.histogram(im.ravel(), 256, [0, 256])

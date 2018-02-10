@@ -52,6 +52,10 @@ def process_file(xxx_todo_changeme):
     outfiles = glob.glob('{}/{}_*{}'.format(outdir, inpath[:-4], extension))
     if outfiles:
         print('skipping', inpath)
+        if dpi is not None:
+            for outfile in outfiles:
+                check_call(['tiffset', '-s', '282', str(dpi), outfile])
+                check_call(['tiffset', '-s', '283', str(dpi), outfile])
         return outfiles
     else:
         print('processing', inpath)
