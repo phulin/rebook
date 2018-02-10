@@ -33,55 +33,61 @@ def split_crops(crops):
 
     return [l for l in (crops[:argmax + 1], crops[argmax + 1:]) if l]
 
-def draw_box(debug, c, color, thickness):
-    if not lib.debug: return
-    x, y, w, h = cv2.boundingRect(c)
-    cv2.rectangle(debug, (x, y), (x + w, y + h), color, 4)
+def masked_mean_std(data, mask):
+    mask_sum = np.count_nonzero(mask)
+    mean = data.sum() / mask_sum
+    data = data.astype(np.float64, copy=False)
+    data_dev = np.zeros(data.shape, dtype=np.float64)
+    np.subtract(data, mean, out=data_dev, where=mask.astype(bool, copy=False))
+    std = np.sqrt(np.square(data_dev).sum() / mask_sum)
+    return mean, std
 
 def crop(im, bw, split=True):
     im_h, im_w = im.shape
 
-    AH = algorithm.dominant_char_height(bw)
-    letter_boxes = algorithm.letter_contours(AH, bw)
-    lines = collate.collate_lines(AH, letter_boxes)
+    all_letters = algorithm.all_letters(bw)
+    AH = algorithm.dominant_char_height(bw, letters=all_letters)
+    letters = algorithm.letter_contours(AH, bw, letters=all_letters)
+    lines = collate.collate_lines(AH, letters)
 
     stroke_widths = algorithm.fast_stroke_width(bw)
-    lib.debug_imwrite('strokes.png', lib.normalize_u8(stroke_widths.clip(0, 10)))
+    if lib.debug:
+        lib.debug_imwrite('strokes.png', lib.normalize_u8(stroke_widths.clip(0, 10)))
 
     mask = np.zeros(im.shape, dtype=np.uint8)
-    letter_contours = [c for (c, _, _, _, _) in letter_boxes]
-    cv2.drawContours(mask, letter_contours, -1, 255, thickness=cv2.FILLED)
+    for line in lines:
+        for letter in line:
+            sliced = letter.crop().apply(mask)
+            sliced += letter.raster()
 
-    masked_strokes = np.ma.masked_where(mask ^ 255, stroke_widths)
-    strokes_mean = masked_strokes.mean()
-    strokes_std = masked_strokes.std()
+    lib.debug_imwrite('letter_mask.png', -mask)
+
+    masked_strokes = stroke_widths.copy()
+    masked_strokes &= -mask
+
+    strokes_mean, strokes_std = masked_mean_std(masked_strokes, mask)
     print('overall: mean:', strokes_mean, 'std:', strokes_std)
 
     debug = cv2.cvtColor(im, cv2.COLOR_GRAY2RGB)
     line_crops = []
-    good_contours = []
     for line in lines:
         line_crop = Crop.null(bw)
         if len(line) <= 1: continue
-        for c, x, y, w, h in line:
-            crop = Crop.from_rect(x, y, w, h)
+        for letter in line:
+            crop = letter.crop()
+            raster = letter.raster()
+            sliced_strokes = crop.apply(stroke_widths).copy()
+            sliced_strokes &= lib.bool_to_u8(raster)
 
-            mask = np.zeros((h, w), dtype=np.uint8)
-            cv2.drawContours(mask, [c], 0, 255,
-                             thickness=cv2.FILLED, offset=(-x, -y))
-            masked_strokes = np.ma.masked_where(mask ^ 255,
-                                                crop.apply(stroke_widths))
-            # print 'mean:', masked_strokes.mean(), 'std:', masked_strokes.std()
-            mean = masked_strokes.mean()
+            mean, std = masked_mean_std(sliced_strokes, raster)
             if mean < strokes_mean - strokes_std:
-                print('skipping{: 5d}{: 5d} {:.03f} {:.03f}'.format(
-                    x, y, mean, masked_strokes.std()
+                print('skipping {:4d} {:4d} {:.03f} {:.03f}'.format(
+                    letter.x, letter.y, mean, std,
                 ))
-                draw_box(debug, c, (0, 0, 255), 2)
+                if lib.debug: letter.box(debug, color=lib.RED)
             else:
-                draw_box(debug, c, (0, 255, 0), 2)
+                if lib.debug: letter.box(debug, color=lib.GREEN)
                 line_crop = line_crop.union(crop)
-                good_contours.append(c)
 
         line_crops.append(line_crop)
 
@@ -118,5 +124,3 @@ def crop(im, bw, split=True):
         crop_sets = [line_crops]
 
     return AH, lines, [Crop.union_all(cs) for cs in crop_sets]
-
-

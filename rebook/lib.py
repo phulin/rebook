@@ -24,7 +24,7 @@ def clip_u8(im):
     return im.clip(0, 255).astype(np.uint8)
 
 def bool_to_u8(bools):
-    return -bools.astype(np.uint8)
+    return -bools.astype(np.uint8, copy=False)
 
 def is_bw(im):
     return (im + 1 < 2).all()

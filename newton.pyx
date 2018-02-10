@@ -32,7 +32,6 @@ def t_i_k(np.ndarray[np.float64_t, ndim=2] R,
     cdef double t, y, yp, u, target, gp
 
     m = g.degree()
-    assert m <= 9
 
     # defer interior scaling until computation
     g_coef = g.coef.copy()

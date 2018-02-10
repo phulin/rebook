@@ -19,13 +19,9 @@ import algorithm
 import binarize
 import collate
 from geometry import Crop, Line, Line3D
-from letters import TextLine
 import lib
+from lib import RED, GREEN, BLUE
 import newton
-
-BLUE = (255, 0, 0)
-GREEN = (0, 255, 0)
-RED = (0, 0, 255)
 
 # focal length f = 3270.5 pixels
 f = 3270.5
@@ -112,7 +108,8 @@ def remove_outliers(im, AH, lines):
             color = GREEN if is_in else RED
             cv2.circle(debug, tuple(p.astype(int)), 4, color, -1)
 
-        result.append(TextLine(compress(l, inliers), poly))
+        l.compress(inliers)
+        result.append(l)
 
     for l in result:
         cv2.circle(debug, tuple(l[0].left_mid().astype(int)), 6, BLUE, -1)
@@ -372,7 +369,8 @@ def correct_geometry(orig, mesh, interpolation=cv2.INTER_LINEAR):
     mesh32 = mesh.astype(np.float32)
     xmesh, ymesh = mesh32[:, :, 0], mesh32[:, :, 1]
     conv_xmesh, conv_ymesh = cv2.convertMaps(xmesh, ymesh, cv2.CV_16SC2)
-    out = cv2.remap(orig, conv_xmesh, conv_ymesh, interpolation=interpolation)
+    out = cv2.remap(orig, conv_xmesh, conv_ymesh, interpolation=interpolation,
+                    borderMode=cv2.BORDER_REPLICATE)
     lib.debug_imwrite('corrected.png', out)
 
     return out
@@ -479,14 +477,18 @@ def full_lines(AH, lines, v):
     return compress(lines, mask)
 
 def get_AH_lines(im):
-    AH = algorithm.dominant_char_height(im)
+    all_letters = algorithm.all_letters(im)
+    AH = algorithm.dominant_char_height(im, letters=all_letters)
     print('AH =', AH)
-    letters = algorithm.letter_contours(AH, im)
+    letters = algorithm.letter_contours(AH, im, letters=all_letters)
     print('collating...')
     all_lines = lib.timeit(collate.collate_lines)(AH, letters)
     all_lines.sort(key=lambda l: l[0].y)
 
-    lines = remove_outliers(im, AH, all_lines)
+    print('combining...')
+    combined = algorithm.combine_underlined(AH, im, all_lines, all_letters)
+
+    lines = remove_outliers(im, AH, combined)
 
     # if lib.debug:
     #     debug = cv2.cvtColor(bw, cv2.COLOR_GRAY2BGR)
@@ -496,7 +498,7 @@ def get_AH_lines(im):
     #                     tuple(l2.base_point().astype(int)), RED, 2)
     #     lib.debug_imwrite('all_lines.png', debug)
 
-    return AH, all_lines, lines
+    return AH, combined, lines
 
 N_LONGS = 15
 def vanishing_point(lines, v0, O):
@@ -656,7 +658,7 @@ def E_str(theta, g, l_m, line_points):
     result = np.concatenate(residuals)
     return result
 
-DEGREE = 9
+DEGREE = 18
 def unpack_args(args):
     # theta: 3; a_m: DEGREE; align: 2; l_m: len(lines)
     return np.split(np.array(args), (3, 3 + DEGREE, 3 + DEGREE + 2))
@@ -888,28 +890,30 @@ def make_mesh_2d(all_lines, O, R, g):
     corners = image_to_focal_plane(corners_2d, O)
     _, corners_XYZ = newton.t_i_k(R, g, corners, T0)
 
+    corners_X, _, corners_Z = corners_XYZ
+    relative_Z_error = (g(corners_X) - corners_Z) / corners_Z
+    corners_XYZ = corners_XYZ[:, relative_Z_error <= 0.02]
+
     debug_print_points('corners.png', corners_2d)
 
-    box_XYZ = Crop.from_points(corners_XYZ).expand(0.01)
+    box_XYZ = Crop.from_points(corners_XYZ[:2]).expand(0.01)
     print('box_XYZ:', box_XYZ)
 
     # 70th percentile line width a good guess
-    n_points_w = np.percentile(np.array([line.width() for line in all_lines]), 70)
+    n_points_w = 1.2 * np.percentile(np.array([line.width() for line in all_lines]), 90)
     mesh_XYZ_x = np.linspace(box_XYZ.x0, box_XYZ.x1, 400)
     mesh_XYZ_z = g(mesh_XYZ_x)
-    print('Zs:', mesh_XYZ_z[0], mesh_XYZ_z[-1])
     mesh_XYZ_xz_arc, total_arc = arc_length_points(mesh_XYZ_x, mesh_XYZ_z,
                                                    n_points_w)
     mesh_XYZ_x_arc, _ = mesh_XYZ_xz_arc
 
     # TODO: think more about estimation of aspect ratio for mesh
-    # n_points_h = n_points_w * box_XYZ.h / total_arc
-    n_points_h = n_points_w * 1.7
+    n_points_h = n_points_w * box_XYZ.h / total_arc
+    # n_points_h = n_points_w * 1.7
 
     mesh_XYZ_y = np.linspace(box_XYZ.y0, box_XYZ.y1, n_points_h)
     mesh_XYZ = make_mesh_XYZ(mesh_XYZ_x_arc, mesh_XYZ_y, g)
     mesh_2d = gcs_to_image(mesh_XYZ, O, R)
-    print(mesh_2d.shape)
     print('mesh:', Crop.from_points(mesh_2d))
 
     debug_print_points('mesh1.png', mesh_2d, step=20)
@@ -934,6 +938,27 @@ def initial_args(lines, O, theta_0=(1e-7, 1e-7, 1e-7)):
 
     # line points on focal plane
     line_points = [base_points(line, O) for line in lines]
+
+    debug = cv2.cvtColor(bw, cv2.COLOR_GRAY2BGR)
+    for line in line_points:
+        for p in line.T:
+            cv2.circle(debug, tuple(project_to_image(p, O).astype(int)), 2, lib.GREEN, -1)
+
+    # make underlines straight as well
+    underlines = sum([line.underlines for line in lines], [])
+    print('underlines:', len(underlines))
+    for underline in underlines:
+        mid_contour = (underline.top_contour() + underline.bottom_contour()) / 2
+        all_mid_points = np.stack([
+            underline.x + np.arange(underline.w), mid_contour,
+        ])
+        mid_points = all_mid_points[:, ::5]
+        for p in mid_points.T:
+            cv2.circle(debug, tuple(p.astype(int)), 4, lib.BLUE, -1)
+
+        line_points.append(image_to_focal_plane(mid_points, O))
+
+    lib.debug_imwrite('opt_points.png', debug)
 
     # line left-mid and right-mid points on focal plane.
     # axes after transpose: (coord 2, LR 2, line N)
@@ -963,13 +988,32 @@ def initial_args(lines, O, theta_0=(1e-7, 1e-7, 1e-7)):
 def kim2014(orig):
     lib.debug_prefix = 'dewarp/'
 
-    im = binarize.binarize(orig, algorithm=binarize.ntirogiannis2014)
+    im = binarize.binarize(orig, algorithm=lambda im: binarize.sauvola(im, k=0.1))
     global bw
     bw = im
+
+    AH, all_lines, lines = get_AH_lines(im)
 
     im_h, im_w = im.shape
     O = np.array((im_w / 2.0, im_h / 2.0))
 
+    # Test if line start distribution is bimodal.
+    line_xs = np.array([line.left() for line in lines])
+    bimodal = line_xs.std() / im_w > 0.10
+
+    if bimodal:
+        print('Bimodal! Splitting page!')
+        bw = im[:, :im_w / 2]
+        left = kim2014_individual(orig[:, :im_w / 2], im[:, :im_w / 2], O)
+        O_right = O - np.array((im_w / 2, 0))
+        bw = im[:, im_w / 2:]
+        right = kim2014_individual(orig[:, im_w / 2:], im[:, im_w / 2:], O_right)
+        return (left, right)
+    else:
+        left = kim2014_individual(orig, im, O)
+        return (left,)
+
+def kim2014_individual(orig, im, O):
     AH, all_lines, lines = get_AH_lines(im)
 
     # Estimate viewpoint from vanishing point
@@ -987,7 +1031,7 @@ def kim2014(orig):
         jac=Jac_E_str,
         method='lm',
         args=(mid_points, line_points),
-        ftol=1e-2,
+        ftol=1e-3,
         x_scale='jac',
     )
     theta, a_m, _, l_m = unpack_args(result.x)
@@ -1025,12 +1069,12 @@ def kim2014(orig):
 
     # TODO: use E_1 if not aligned
     result = lib.timeit(opt.least_squares)(
-        fun=E_2,
+        fun=E_0,
         x0=np.concatenate([theta, a_m, align, l_m]),
-        jac=Jac_E_2,
+        jac=Jac_E_str,
         method='lm',
         args=(mid_points, line_points),
-        ftol=1e-3,
+        ftol=1e-4,
         x_scale='jac',
     )
     theta, a_m, align, l_m = unpack_args(result.x)
@@ -1048,7 +1092,7 @@ def kim2014(orig):
     for idx, X in enumerate(align):
         line = Line3D.from_point_vec((X, 0, g(X)), (0, 1, 0))
         line.transform(inv(R)).offset(Of).project(FOCAL_PLANE_Z)\
-            .offset(O).draw(debug, color=BLUE if idx == 0 else GREEN)
+            .offset(-O).draw(debug, color=BLUE if idx == 0 else GREEN)
     lib.debug_imwrite('align.png', debug)
 
     mesh_2d = make_mesh_2d(all_lines, O, R, g)
@@ -1060,7 +1104,8 @@ def go(argv):
     im = cv2.imread(argv[1], cv2.IMREAD_UNCHANGED)
     lib.debug = True
     out = kim2014(im)
-    cv2.imwrite('dewarped.png', out)
+    for i, out_img in enumerate(out):
+        cv2.imwrite('dewarped{}.png'.format(i), out_img)
 
 if __name__ == '__main__':
     go(sys.argv)

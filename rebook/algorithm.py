@@ -1,10 +1,9 @@
-from __future__ import print_function
+from __future__ import division, print_function
 
 import cv2
-# import itertools
 import math
 import numpy as np
-# import numpy.polynomial.polynomial as poly
+from scipy import interpolate
 
 import lib
 
@@ -12,103 +11,22 @@ from lib import debug_imwrite, is_bw
 from letters import Letter, TextLine
 
 cross33 = cv2.getStructuringElement(cv2.MORPH_CROSS, (3, 3))
-def gradient(im):
-    return cv2.morphologyEx(im, cv2.MORPH_GRADIENT, cross33)
-
-def text_contours(im, original):
-    im_h, im_w = im.shape
-    min_feature_size = im_h / 150
-
-    copy = im.copy()
-    cv2.rectangle(copy, (0, 0), (im_w, im_h), 255, 3)
-    _, contours, [hierarchy] = \
-        cv2.findContours(copy, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
-
-    # find biggest holes
-    image_area = im_w * im_h
-    good_holes = []
-    i = 0
-    while i >= 0:
-        j = hierarchy[i][2]
-        while j >= 0:
-            c = contours[j]
-            x, y, w, h = cv2.boundingRect(c)
-            if cv2.contourArea(c) > image_area * 0.3:
-                good_holes.append(j)
-            j = hierarchy[j][0]
-        i = hierarchy[i][0]
-
-    good_contours, bad_contours = [], []
-    for hole in good_holes:
-        x, y, w, h = cv2.boundingRect(contours[hole])
-        # print "hole:", x, y, w, h
-
-        i = hierarchy[hole][2]
-        while i >= 0:
-            c = contours[i]
-            x, y, w, h = cv2.boundingRect(c)
-            # print 'mean:', orig_slice.mean(), \
-            # 'horiz stddev:', orig_slice.mean(axis=0).std()
-            # print 'contour:', x, y, w, h
-            if len(c) > 10 \
-                    and h < 2 * w \
-                    and w > min_feature_size \
-                    and h > min_feature_size:
-                mask = np.zeros((h, w), dtype=np.uint8)
-                cv2.drawContours(mask, contours, i, 255,
-                                 thickness=cv2.FILLED,
-                                 offset=(-x, -y))
-                mask_filled = np.count_nonzero(mask)
-
-                orig_slice = cv2.bitwise_not(original[y:y + h, x:x + w])
-                orig_filled = np.count_nonzero(mask & orig_slice)
-
-                filled_ratio = orig_filled / float(mask_filled)
-                if filled_ratio > 0.1:
-                    good_contours.append(c)
-            else:
-                bad_contours.append(c)
-            i = hierarchy[i][0]
-
-    mask = np.zeros(im.shape, dtype=np.uint8)
-    for i in range(len(good_contours)):
-        cv2.drawContours(mask, good_contours, i, 255,
-                         thickness=cv2.FILLED)
-    debug_imwrite('text_contours.png', mask)
-
-    return good_contours, bad_contours
-
-# and x > 0.02 * im_w \
-# and x + w < 0.98 * im_w \
-# and y > 0.02 * im_h \
-# and y + h < 0.98 * im_h:
 
 def skew_angle(im, orig, AH, lines):
     if len(orig.shape) == 2:
-        lines_debug = cv2.cvtColor(orig, cv2.COLOR_GRAY2RGB)
+        debug = cv2.cvtColor(orig, cv2.COLOR_GRAY2RGB)
     else:
-        lines_debug = orig.copy()
+        debug = orig.copy()
 
     alphas = []
     for l in lines:
         if len(l) < 10: continue
 
-        points = np.array([(x + w / 2, y + h) for (_, x, y, w, h) in l])
-        ys = np.array([y + h for _, x, y, w, h in l])
-        ys_padded = np.pad(ys, 2, 'edge')
-        ys_average = (ys_padded[4:] + ys_padded[3:-1] +
-                      ys_padded[1:-3] + ys_padded[:-4]) / 4
-        points_masked = points[ys >= ys_average - AH / 8]
-        # print 'masked:', len(points) - len(points_masked), 'out of', len(points)
+        line_model = l.fit_line()
+        line_model.draw(debug)
+        alphas.append(line_model.angle())
 
-        vx, vy, x1, y1 = cv2.fitLine(points_masked, cv2.DIST_L2, 0, 0.01, 0.01)
-        cv2.line(lines_debug,
-                    (x1 - vx * 10000, y1 - vy * 10000),
-                    (x1 + vx * 10000, y1 + vy * 10000),
-                    (255, 0, 0), thickness=3)
-        alphas.append(math.atan2(vy, vx))
-
-    debug_imwrite('lines.png', lines_debug)
+    debug_imwrite('lines.png', debug)
 
     return np.median(alphas)
 
@@ -145,12 +63,17 @@ def top_contours(contours, hierarchy):
 
     return result
 
-def dominant_char_height(im):
-    _, contours, [hierarchy] = cv2.findContours(im ^ 255, cv2.RETR_CCOMP,
-                                                cv2.CHAIN_APPROX_SIMPLE)
-    letters = top_contours(contours, hierarchy)
-    boxes = [cv2.boundingRect(c) for c in letters]
-    heights = [h for x, y, w, h in boxes if w >= 5]
+def all_letters(im):
+    max_label, labels, stats, centroids = \
+        cv2.connectedComponentsWithStats(im ^ 255, connectivity=4)
+    return [Letter(label, labels, stats[label], centroids[label]) \
+            for label in range(1, max_label)]
+
+def dominant_char_height(im, letters=None):
+    if letters is None:
+        letters = all_letters(im)
+
+    heights = [letter.h for letter in letters if letter.w > 5]
 
     hist, _ = np.histogram(heights, 256, [0, 256])
     # TODO: make depend on DPI.
@@ -158,12 +81,8 @@ def dominant_char_height(im):
 
     if lib.debug:
         debug = cv2.cvtColor(im, cv2.COLOR_GRAY2BGR)
-        for c in letters:
-            x, y, w, h = cv2.boundingRect(c)
-            if h == AH:
-                cv2.rectangle(debug, (x, y), (x + w, y + h), (0, 255, 0), 2)
-            else:
-                cv2.rectangle(debug, (x, y), (x + w, y + h), (0, 0, 255), 2)
+        for letter in letters:
+            letter.box(debug, color=lib.GREEN if letter.h == AH else lib.RED)
         debug_imwrite('heights.png', debug)
 
     return AH
@@ -183,49 +102,69 @@ def word_contours(AH, im):
 
     return word_boxes
 
-def valid_letter(AH, c, x, y, w, h):
-    return h < 3 * AH and w < 5 * AH and h > AH / 2 and w > AH / 3
+def valid_letter(AH, l):
+    return l.h < 3 * AH and l.w < 5 * AH and l.h > AH / 2 and l.w > AH / 3
 
-def letter_contours(AH, im):
-    _, contours, [hierarchy] = cv2.findContours(im ^ 255, cv2.RETR_CCOMP,
-                                                cv2.CHAIN_APPROX_SIMPLE)
-    all_contours = top_contours(contours, hierarchy)
-    letter_boxes = [Letter(letter, *cv2.boundingRect(letter)) for letter in all_contours]
+def letter_contours(AH, im, letters=None):
+    if letters is None:
+        letters = all_letters(im)
 
     if lib.debug:
         debug = cv2.cvtColor(im, cv2.COLOR_GRAY2BGR)
-        for l in letter_boxes:
-            l.box(debug, color=(0, 255, 0) if valid_letter(AH, *l) else (0, 0, 255))
+        for l in letters:
+            l.box(debug, color=lib.GREEN if valid_letter(AH, l) else lib.RED)
         lib.debug_imwrite('letters.png', debug)
 
     # Slightly tuned from paper (h < 3 * AH and h < AH / 4)
-    letter_boxes = [t for t in letter_boxes if valid_letter(AH, *t.tuple())]
+    return [l for l in letters if valid_letter(AH, l)]
 
-    return letter_boxes
-
-def horizontal_lines(AH, im):
-    _, contours, [hierarchy] = cv2.findContours(im ^ 255, cv2.RETR_CCOMP,
-                                                cv2.CHAIN_APPROX_SIMPLE)
+def horizontal_lines(AH, im, components=None):
+    if components is None:
+        components = all_letters(im)
 
     result = []
-    idx = 0
-    while idx >= 0:
-        # catch horiz lines
-        c = contours[idx]
-        x, y, w, h = cv2.boundingRect(c)
-        mask = np.zeros((h, w), dtype=np.uint8)
-        cv2.drawContours(mask, [c], 0, 1,
-                         thickness=cv2.FILLED, offset=(-x, -y))
-        proj = mask.sum(axis=0)
-        max_height_var = np.percentile(proj, 95) - np.percentile(proj, 5)
-        if hierarchy[idx][2] == -1 and w > AH * 10 and max_height_var <= 3 and h < AH:
-            result.append((c, x, y, w, h))
-
-        idx = hierarchy[idx][0]
+    for component in components:
+        if component.w > AH * 20:
+            mask = component.raster()
+            proj = mask.sum(axis=0)
+            smooth = (proj[:-2] + proj[1:-1] + proj[2:]) / 3.0
+            max_height_var = np.percentile(smooth, 98) - np.percentile(smooth, 2)
+            if smooth.max() <= AH / 4.0 and max_height_var <= AH / 6.0:
+                result.append(component)
 
     return result
 
-@lib.timeit
+def combine_underlined(AH, im, lines, components):
+    lines_set = set(lines)
+    underlines = horizontal_lines(AH, im, components)
+    for underline in underlines:
+        raster = underline.raster()
+        bottom = underline.y + underline.h - 1 - raster[::-1].argmax(axis=0)
+        close_lines = []
+        for line in lines:
+            base_points = line.base_points().astype(int)
+            base_points = base_points[(base_points[:, 0] >= underline.x) \
+                                      & (base_points[:, 0] < underline.right())]
+            if len(base_points) == 0: continue
+
+            base_ys = base_points[:, 1]
+            underline_ys = bottom[base_points[:, 0] - underline.x]
+            if np.all(np.abs(base_ys - underline_ys) < AH):
+                line.underlines.append(underline)
+                close_lines.append(line)
+
+        if len(close_lines) > 1:
+            # print('merging some underlined lines!')
+            combined = close_lines[0]
+            lines_set.remove(combined)
+            for line in close_lines[1:]:
+                lines_set.remove(line)
+                combined.merge(line)
+
+            lines_set.add(combined)
+
+    return list(lines_set)
+
 def collate_lines(AH, word_boxes):
     word_boxes = sorted(word_boxes, key=lambda c_x_y_w_h: c_x_y_w_h[1])
     lines = []
@@ -251,7 +190,6 @@ def collate_lines(AH, word_boxes):
 
     return [TextLine(l) for l in lines]
 
-@lib.timeit
 def collate_lines_2(AH, word_boxes):
     word_boxes = sorted(word_boxes, key=lambda c_x_y_w_h1: c_x_y_w_h1[1])
     lines = []
@@ -367,7 +305,6 @@ def safe_rotate(im, angle):
     debug_imwrite('rotated.png', result)
     return result
 
-@lib.timeit
 def fast_stroke_width(im):
     # im should be black-on-white. max stroke width 41.
     assert im.dtype == np.uint8 and is_bw(im)
@@ -387,3 +324,41 @@ def fast_stroke_width(im):
     dists &= dists_mask
 
     return dists
+
+# only after rotation!
+def fine_dewarp(im, lines):
+    im_h, im_w = im.shape[:2]
+
+    debug = cv2.cvtColor(im, cv2.COLOR_GRAY2BGR)
+    points = []
+    y_offsets = []
+    for line in lines:
+        base_points = np.array([letter.base_point() for letter in line.inliers()])
+        median_y = np.median(base_points[:, 1])
+        y_offsets.append(median_y - base_points[:, 1])
+        points.append(base_points)
+        for p in base_points:
+            pt = tuple(np.round(p).astype(int))
+            cv2.circle(debug, (pt[0], int(median_y)), 4, lib.RED, -1)
+            cv2.circle(debug, pt, 4, lib.GREEN, -1)
+    cv2.imwrite('points.png', debug)
+
+    points = np.concatenate(points)
+    y_offsets = np.concatenate(y_offsets)
+    mesh = np.mgrid[:im_w, :im_h].astype(np.float32)
+    xmesh, ymesh = mesh
+
+    # y_offset_interp = interpolate.griddata(points, y_offsets, xmesh, ymesh, method='nearest')
+    # y_offset_interp = y_offset_interp.clip(-5, 5)
+    # mesh[1] += y_offset_interp  # (mesh[0], mesh[1], grid=False)
+
+    y_offset_interp = interpolate.SmoothBivariateSpline(
+        points[:, 0], points[:, 1], y_offsets
+    )
+    ymesh += y_offset_interp(xmesh, ymesh, grid=False)
+
+    conv_xmesh, conv_ymesh = cv2.convertMaps(xmesh, ymesh, cv2.CV_16SC2)
+    out = cv2.remap(im, conv_xmesh, conv_ymesh, interpolation=cv2.INTER_LINEAR).T
+    cv2.imwrite('corrected.png', out)
+
+    return out

@@ -1,3 +1,5 @@
+from __future__ import division, print_function
+
 import cv2
 import numpy as np
 
@@ -74,6 +76,10 @@ class Line(object):
         vec = np.array((1, self.m))
         vec /= np.linalg.norm(vec)
         return vec
+
+    # Returns angle in range [-pi/2, pi/2)
+    def angle(self):
+        return np.arctan(self.m)
 
     def polynomial(self):
         return P([self.b, self.m])

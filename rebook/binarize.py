@@ -1,3 +1,5 @@
+from __future__ import print_function
+
 import cv2
 import numpy as np
 import numpy.polynomial.polynomial as poly
@@ -55,7 +57,8 @@ def teager(im):
 
 def ntirogiannis2014(im):
     im_h, _ = im.shape
-    IM = cv2.erode(sauvola(im, window_size=61, k=0.4), rect55)
+    IM = cv2.erode(sauvola(im, window_size=31, k=0.1), rect55)
+    IM = cv2.erode(IM, rect55)
     debug_imwrite('niblack.png', IM)
 
     inpainted, modified = inpaint.inpaint_ng14(im, -IM)

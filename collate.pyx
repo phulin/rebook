@@ -6,21 +6,23 @@ cimport numpy as np
 cimport cython
 
 cdef class CLetter:
-    cdef np.ndarray c
-    cdef int x, y, w, h
+    cdef np.ndarray label_map, stats, centroid
+    cdef int label, x, y, w, h, r, b
 
     def __init__(self, letter):
-        self.c = letter.c
+        self.label = letter.label
+        self.label_map = letter.label_map
+        self.stats = letter.stats
+        self.centroid = letter.centroid
         self.x = letter.x
         self.y = letter.y
         self.w = letter.w
         self.h = letter.h
+        self.r = self.x + self.w
+        self.b = self.y + self.h
 
-    cpdef int r(self):
-        return self.x + self.w
-
-    cpdef int b(self):
-        return self.y + self.h
+    def letter(self):
+        return Letter(self.label, self.label_map, self.stats, self.centroid)
 
 def collate_lines(int AH, list letters):
     cdef int score, best_score, line_len
@@ -39,13 +41,13 @@ def collate_lines(int AH, list letters):
             last1 = line[-1]
             last2 = line[-2] if line_len > 1 else last1
             score = best_score
-            if letter.x < last1.r() + 4 * AH \
-                    and last1.y <= letter.b() and letter.y <= last1.b():
-                score = letter.x - last1.r() + abs(letter.y - last1.y)
+            if letter.x < last1.r + 4 * AH \
+                    and last1.y <= letter.b and letter.y <= last1.b:
+                score = letter.x - last1.r + abs(letter.y - last1.y)
             elif line_len > 1 \
                     and letter.x < last2.x + last2.w + AH \
-                    and last2.y <= letter.b() and letter.y <= last2.b():
-                score = letter.x - last2.r() + abs(letter.y - last2.y)
+                    and last2.y <= letter.b and letter.y <= last2.b:
+                score = letter.x - last2.r + abs(letter.y - last2.y)
             if score < best_score:
                 best_score = score
                 best_candidate = line
@@ -56,5 +58,4 @@ def collate_lines(int AH, list letters):
         else:
             lines.append([letter])
 
-    return [TextLine([Letter(cl.c, cl.x, cl.y, cl.w, cl.h) for cl in line]) \
-            for line in lines]
+    return [TextLine([cl.letter() for cl in line]) for line in lines]

@@ -11,12 +11,13 @@ from os.path import join, isfile
 from subprocess import check_call
 
 import algorithm
-from binarize import binarize, adaptive_otsu
+from binarize import binarize, adaptive_otsu, ntirogiannis14
 from crop import crop
 from lib import debug_imwrite
 import lib
 
 extension = '.tif'
+@profile
 def process_image(original, dpi):
     # original = cv2.resize(original, (0, 0), None, 1.5, 1.5)
     im_h, im_w = original.shape
@@ -39,8 +40,9 @@ def process_image(original, dpi):
             rotated = algorithm.safe_rotate(orig_cropped, angle)
 
             lib.debug = False
-            rotated_bw = binarize(rotated, adaptive_otsu, resize=1.0)
-            _, _, [new_crop] = crop(rotated, rotated_bw, split=False)
+            rotated_bw = binarize(rotated, ntirogiannis14, resize=1.0)
+            _, new_lines, [new_crop] = crop(rotated, rotated_bw, split=False)
+            algorithm.fine_dewarp(rotated, new_lines)
 
             if new_crop.nonempty():
                 outimgs.append(new_crop.apply(rotated_bw))
@@ -98,7 +100,7 @@ def accumulate_paths(target, accum):
 
 def run(args):
     if args.single_file:
-        lib.debug = True
+        lib.debug = False  # True
         im = cv2.imread(args.single_file, cv2.IMREAD_UNCHANGED)
         _, outimgs = process_image(im, args.dpi)
         for idx, outimg in enumerate(outimgs):

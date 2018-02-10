@@ -1,22 +1,40 @@
+from __future__ import division, print_function
+
 import cv2
 import itertools
 import numpy as np
+from numpy.polynomial import Polynomial as Poly
+from skimage.measure import ransac
 
-from geometry import Line
+from geometry import Crop, Line
 
 class Letter(object):
-    def __init__(self, c, x, y, w, h):
-        self.c = c
-        self.x = x
-        self.y = y
-        self.w = w
-        self.h = h
+    def __init__(self, label, label_map, stats, centroid):
+        self.label = label
+        self.label_map = label_map
+        self.stats = stats
+        self.centroid = centroid
+
+    @property
+    def x(self): return self.stats[cv2.CC_STAT_LEFT]
+
+    @property
+    def y(self): return self.stats[cv2.CC_STAT_TOP]
+
+    @property
+    def w(self): return self.stats[cv2.CC_STAT_WIDTH]
+
+    @property
+    def h(self): return self.stats[cv2.CC_STAT_HEIGHT]
+
+    def area(self):
+        return self.stats[cv2.CC_STAT_AREA]
 
     def __iter__(self):
         return (x for x in self.tuple())
 
     def tuple(self):
-        return (self.c, self.x, self.y, self.w, self.h)
+        return (self.x, self.y, self.w, self.h)
 
     def left(self):
         return self.x
@@ -56,7 +74,20 @@ class Letter(object):
     def top_point(self):
         return np.array((self.x + self.w / 2.0, self.y))
 
-    def box(self, im, thickness=2, color=(0, 0, 255)):
+    def crop(self):
+        return Crop(self.x, self.y, self.x + self.w, self.y + self.h)
+
+    def raster(self):
+        sliced = self.crop().apply(self.label_map)
+        return sliced == self.label
+
+    def top_contour(self):
+        return self.y + self.raster().argmax(axis=0)
+
+    def bottom_contour(self):
+        return self.y + self.h - 1 - self.raster()[::-1].argmax(axis=0)
+
+    def box(self, im, color=(0, 0, 255), thickness=2):
         cv2.rectangle(im, (self.x, self.y), (self.x + self.w, self.y + self.h),
                       color=color, thickness=thickness)
 
@@ -66,9 +97,12 @@ class Letter(object):
     def __repr__(self): return str(self)
 
 class TextLine(object):
-    def __init__(self, letters, model=None):
+    def __init__(self, letters, model=None, underlines=[]):
         self.letters = sorted(letters, key=lambda l: l.x)
         self.model = model
+        self.model_line = None
+        self.inliers = None
+        self.underlines = []
 
     def __iter__(self):
         return (l for l in self.letters)
@@ -99,7 +133,9 @@ class TextLine(object):
     def merge(self, other):
         self.letters += other.letters
         self.letters.sort(key=lambda l: l.x)
+        self.underlines = list(set(self.underlines) | set(other.underlines))
         self.model = None
+        self.model_line = None
 
     def domain(self):
         return self.letters[0].base_point()[0], self.letters[-1].base_point()[0]
@@ -121,3 +157,50 @@ class TextLine(object):
 
     def approx_line(self):
         return Line.from_points(self.first_base(), self.last_base())
+
+    def base_points(self):
+        return np.array([l.base_point() for l in self.letters])
+
+    class PolyModel5(object):
+        def estimate(self, data):
+            self.params = Poly.fit(data[:, 0], data[:, 1], 5, domain=[-1, 1])
+            return True
+
+        def residuals(self, data):
+            return abs(self.params(data[:, 0]) - data[:, 1])
+
+    def fit_poly(self):
+        if self.model is None:
+            model, inliers = ransac(self.base_points(), TextLine.PolyModel5, 10, 4)
+            self.model = model.params
+            self.inliers = inliers
+
+        return self.model
+
+    class LineModel(object):
+        def estimate(self, data):
+            self.params = Line.fit(data)
+            return True
+
+        def residuals(self, data):
+            return np.abs(self.params(data[:, 0]) - data[:, 1])
+
+    def fit_line(self):
+        if self.model_line is None:
+            if len(self) <= 3:
+                self.model_line = Line.fit(self.base_points())
+            else:
+                model, _ = ransac(self.base_points(), TextLine.LineModel, 3, 4)
+                self.model_line = model.params
+
+        return self.model_line
+
+    def inliers(self):
+        self.fit_poly()
+        return [l for (l, inlier) in zip(self.letters, self.inliers) if inlier]
+
+class Underline(object):
+    def __init__(self, label, label_map, stats):
+        self.label = label
+        self.label_map = label_map
+        self.stats = stats
