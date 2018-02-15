@@ -55,8 +55,7 @@ def teager(im):
         - padded[2:, 1:-1] * padded[:-2, 1:-1] \
         - padded[1:-1, 2:] * padded[1:-1, :-2])
 
-def ntirogiannis2014(im):
-    im_h, _ = im.shape
+def ng2014_normalize(im):
     IM = cv2.erode(sauvola(im, window_size=31, k=0.1), rect55)
     IM = cv2.erode(IM, rect55)
     debug_imwrite('niblack.png', IM)
@@ -73,6 +72,12 @@ def ntirogiannis2014(im):
     F = im_f / bg_f
     N = clip_u8(255 * (F - F.min()))
     debug_imwrite('N.png', N)
+
+    return N
+
+def ntirogiannis2014(im):
+    im_h, _ = im.shape
+    N = ng2014_normalize(im)
     O = otsu(im)
 
     # TODO: use actual skeletonization system and CC filtering
@@ -107,14 +112,14 @@ def ntirogiannis2014(im):
     # take everything that's FG in O_eroded and niblack
     return O_eroded | local
 
-@lib.timeit
+# @lib.timeit
 def niblack(im, window_size=61, k=0.2):
     means, stds = mean_std(im, window_size)
     thresh = means + k * stds
 
     return bool_to_u8(im > thresh)
 
-@lib.timeit
+# @lib.timeit
 def sauvola(im, window_size=61, k=0.2):
     assert im.dtype == np.uint8
     means, stds = mean_std(im, window_size)
@@ -349,17 +354,19 @@ def retinex(im, mu_1=0.9, mu_2=25, sigma=5):
     bools = (im < mu_1 * G) & (cv2.absdiff(im, G) > mu_2)
     return bools.astype(np.uint8)
 
+def grayscale(im, algorithm=CIELab_gray):
+    if len(im.shape) > 2:
+        return algorithm(im)
+    else:
+        return im
+
 def binarize(im, algorithm=adaptive_otsu, gray=CIELab_gray, resize=1.0):
     if (im + 1 < 2).all():  # black and white
         return im
     else:
         if resize < 0.99 or resize > 1.01:
             im = cv2.resize(im, (0, 0), None, resize, resize)
-        if len(im.shape) > 2:
-            lum = gray(im)
-            return algorithm(lum)  # & yan(l, T=35)
-        else:
-            return algorithm(im)
+        return algorithm(grayscale(im, algorithm=gray))
 
 def go(argv):
     im = cv2.imread(argv[1], cv2.IMREAD_UNCHANGED)

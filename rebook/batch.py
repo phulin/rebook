@@ -11,13 +11,12 @@ from os.path import join, isfile
 from subprocess import check_call
 
 import algorithm
-from binarize import binarize, adaptive_otsu, ntirogiannis14
+import binarize
 from crop import crop
 from lib import debug_imwrite
 import lib
 
 extension = '.tif'
-@profile
 def process_image(original, dpi):
     # original = cv2.resize(original, (0, 0), None, 1.5, 1.5)
     im_h, im_w = original.shape
@@ -27,7 +26,7 @@ def process_image(original, dpi):
         print('detected dpi:', dpi)
     split = im_w > im_h # two pages
 
-    bw = binarize(original, adaptive_otsu, resize=1.0)
+    bw = binarize.binarize(original, algorithm=binarize.adaptive_otsu, resize=1.0)
     debug_imwrite('thresholded.png', bw)
     AH, lines, crops = crop(original, bw, split=split)
 
@@ -40,17 +39,23 @@ def process_image(original, dpi):
             rotated = algorithm.safe_rotate(orig_cropped, angle)
 
             lib.debug = False
-            rotated_bw = binarize(rotated, ntirogiannis14, resize=1.0)
+            rotated_bw = binarize.binarize(rotated, algorithm=binarize.adaptive_otsu, resize=1.0)
             _, new_lines, [new_crop] = crop(rotated, rotated_bw, split=False)
-            algorithm.fine_dewarp(rotated, new_lines)
+            # algorithm.fine_dewarp(rotated, new_lines)
 
             if new_crop.nonempty():
-                outimgs.append(new_crop.apply(rotated_bw))
+                cropped = new_crop.apply(rotated)
+                if lib.is_bw(original):
+                    outimgs.append(binarize.otsu(cropped))
+                else:
+                    outimgs.append(
+                        binarize.ng2014_normalize(binarize.grayscale(rotated))
+                    )
 
     return dpi, outimgs
 
-def process_file(xxx_todo_changeme):
-    (inpath, outdir, dpi) = xxx_todo_changeme
+def process_file(args):
+    (inpath, outdir, dpi) = args
     outfiles = glob.glob('{}/{}_*{}'.format(outdir, inpath[:-4], extension))
     if outfiles:
         print('skipping', inpath)
@@ -138,7 +143,7 @@ def run(args):
 
         print('making pdf:', outpdf)
         check_call([
-            'tiff2pdf', '-q', '100', '-j', '-p', 'letter',
+            'tiff2pdf', '-z', '-p', 'letter',
             '-o', outpdf, outtif
         ])
 

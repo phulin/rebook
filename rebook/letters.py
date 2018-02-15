@@ -163,7 +163,7 @@ class TextLine(object):
 
     class PolyModel5(object):
         def estimate(self, data):
-            self.params = Poly.fit(data[:, 0], data[:, 1], 5, domain=[-1, 1])
+            self.params = Poly.fit(data[:, 0], data[:, 1], 7, domain=[-1, 1])
             return True
 
         def residuals(self, data):
