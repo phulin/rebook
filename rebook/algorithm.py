@@ -362,3 +362,61 @@ def fine_dewarp(im, lines):
     cv2.imwrite('corrected.png', out)
 
     return out
+
+def masked_mean_std(data, mask):
+    mask_sum = np.count_nonzero(mask)
+    mean = data.sum() / mask_sum
+    data = data.astype(np.float64, copy=False)
+    data_dev = np.zeros(data.shape, dtype=np.float64)
+    np.subtract(data, mean, out=data_dev, where=mask.astype(bool, copy=False))
+    std = np.sqrt(np.square(data_dev).sum() / mask_sum)
+    return mean, std
+
+def remove_stroke_outliers(im, lines, k=1.0):
+    stroke_widths = fast_stroke_width(im)
+    if lib.debug:
+        lib.debug_imwrite('strokes.png', lib.normalize_u8(stroke_widths.clip(0, 10)))
+
+    mask = np.zeros(im.shape, dtype=np.uint8)
+    for line in lines:
+        for letter in line:
+            sliced = letter.crop().apply(mask)
+            sliced += letter.raster()
+
+    lib.debug_imwrite('letter_mask.png', -mask)
+
+    masked_strokes = stroke_widths.copy()
+    masked_strokes &= -mask
+
+    strokes_mean, strokes_std = masked_mean_std(masked_strokes, mask)
+    if lib.debug:
+        print('overall: mean:', strokes_mean, 'std:', strokes_std)
+
+    debug = cv2.cvtColor(im, cv2.COLOR_GRAY2RGB)
+    new_lines = []
+    for line in lines:
+        if len(line) <= 1: continue
+        good_letters = []
+        for letter in line:
+            crop = letter.crop()
+            raster = letter.raster()
+            sliced_strokes = crop.apply(stroke_widths).copy()
+            sliced_strokes &= lib.bool_to_u8(raster)
+
+            mean, std = masked_mean_std(sliced_strokes, raster)
+            if mean < strokes_mean - k * strokes_std:
+                if lib.debug:
+                    print('skipping {:4d} {:4d} {:.03f} {:.03f}'.format(
+                        letter.x, letter.y, mean, std,
+                    ))
+                    letter.box(debug, color=lib.RED)
+            else:
+                if lib.debug: letter.box(debug, color=lib.GREEN)
+                good_letters.append(letter)
+
+        if good_letters:
+            new_lines.append(TextLine(good_letters, underlines=line.underlines))
+
+    lib.debug_imwrite("stroke_filter.png", debug)
+
+    return new_lines

@@ -13,6 +13,7 @@ from subprocess import check_call
 import algorithm
 import binarize
 from crop import crop
+from geometry import Crop
 from lib import debug_imwrite
 import lib
 
@@ -28,20 +29,22 @@ def process_image(original, dpi):
 
     bw = binarize.binarize(original, algorithm=binarize.adaptive_otsu, resize=1.0)
     debug_imwrite('thresholded.png', bw)
-    AH, lines, crops = crop(original, bw, split=split)
+    AH, line_sets = crop(original, bw, split=split)
 
     outimgs = []
-    for idx, c in enumerate(crops):
+    for lines in line_sets:
+        c = Crop.union_all([line.crop() for line in lines])
         if c.nonempty():
             bw_cropped = c.apply(bw)
             orig_cropped = c.apply(original)
             angle = algorithm.skew_angle(bw_cropped, original, AH, lines)
             rotated = algorithm.safe_rotate(orig_cropped, angle)
 
-            lib.debug = False
             rotated_bw = binarize.binarize(rotated, algorithm=binarize.adaptive_otsu, resize=1.0)
-            _, new_lines, [new_crop] = crop(rotated, rotated_bw, split=False)
+            _, [new_lines] = crop(rotated, rotated_bw, split=False)
+            new_crop = Crop.union_all([line.crop() for line in new_lines])
             # algorithm.fine_dewarp(rotated, new_lines)
+            lib.debug = False
 
             if new_crop.nonempty():
                 cropped = new_crop.apply(rotated)
@@ -105,7 +108,7 @@ def accumulate_paths(target, accum):
 
 def run(args):
     if args.single_file:
-        lib.debug = False  # True
+        lib.debug = True
         im = cv2.imread(args.single_file, cv2.IMREAD_UNCHANGED)
         _, outimgs = process_image(im, args.dpi)
         for idx, outimg in enumerate(outimgs):
