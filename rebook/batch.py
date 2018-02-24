@@ -35,24 +35,27 @@ def process_image(original, dpi):
     for lines in line_sets:
         c = Crop.union_all([line.crop() for line in lines])
         if c.nonempty():
+            lib.debug = False
             bw_cropped = c.apply(bw)
             orig_cropped = c.apply(original)
             angle = algorithm.skew_angle(bw_cropped, original, AH, lines)
             rotated = algorithm.safe_rotate(orig_cropped, angle)
 
-            rotated_bw = binarize.binarize(rotated, algorithm=binarize.adaptive_otsu, resize=1.0)
+            rotated_bw = binarize.binarize(rotated, algorithm=binarize.adaptive_otsu)
             _, [new_lines] = crop(rotated, rotated_bw, split=False)
+
+            # dewarped = algorithm.fine_dewarp(rotated, new_lines)
+            # _, [new_lines] = crop(rotated, rotated_bw, split=False)
             new_crop = Crop.union_all([line.crop() for line in new_lines])
-            # algorithm.fine_dewarp(rotated, new_lines)
-            lib.debug = False
 
             if new_crop.nonempty():
+                # cropped = new_crop.apply(dewarped)
                 cropped = new_crop.apply(rotated)
                 if lib.is_bw(original):
                     outimgs.append(binarize.otsu(cropped))
                 else:
                     outimgs.append(
-                        binarize.ng2014_normalize(binarize.grayscale(rotated))
+                        binarize.ng2014_normalize(binarize.grayscale(cropped))
                     )
 
     return dpi, outimgs
