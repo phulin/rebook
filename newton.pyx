@@ -53,7 +53,7 @@ def t_i_k(np.ndarray[np.float64_t, ndim=2] R,
 
     cdef int n = ts.shape[0]
     cdef int i, j, k, m, big_ys, done
-    cdef double t, y, yp, u, gp, best_t, t0
+    cdef double t, y, yp, u, gp, best_t, t0, big_ys_sum
     cdef double u_minus, u_plus, y_minus, y_plus
 
     cdef double w = g.omega
@@ -69,6 +69,7 @@ def t_i_k(np.ndarray[np.float64_t, ndim=2] R,
         return ts, ts * rays - ROf[:, np.newaxis]
 
     big_ys = 0
+    big_ys_sum = 0
 
     for i in range(n):
         Rp_x = rays[0, i]
@@ -109,9 +110,10 @@ def t_i_k(np.ndarray[np.float64_t, ndim=2] R,
             if y_minus * y_plus > 0:  # same sign, not obv an intermediate root
                 done = True
             else:
-                print 'warning: need to check all roots!'
+                pass  # print 'warning: need to check all roots!'
 
         if not done:
+            # print 'checking all roots...'
             s_coef = h_coef / w
             s_coef[1] -= Rp_z / Rp_x / w
             s_coef[0] += ROf_z - Rp_z / Rp_x * ROf_x
@@ -123,18 +125,15 @@ def t_i_k(np.ndarray[np.float64_t, ndim=2] R,
             if roots_t_neg.shape[0] > 0:
                 t = -INFINITY
                 for j in range(roots_t_neg.shape[0]):
-                    if roots_t_neg[j] > best_t:
+                    if abs(roots_t_neg[j]) < abs(t):
                         t = roots_t_neg[j]
-            else:
-                print 'warning: choosing positive t!'
-                t = roots_t.min()
 
-            for j in range(10):
-                u = w * (Rp_x * t - ROf_x)
-                y = poly_eval(h_coef, u) / w - fma(Rp_z, t, -ROf_z)
-                if fabs(y) < 1e-8: break
-                yp = fma(poly_eval(hp_coef, u), Rp_x, -Rp_z)
-                t -= y / yp
+            # for j in range(10):
+            #     u = w * (Rp_x * t - ROf_x)
+            #     y = poly_eval(h_coef, u) / w - fma(Rp_z, t, -ROf_z)
+            #     if fabs(y) < 1e-8: break
+            #     yp = fma(poly_eval(hp_coef, u), Rp_x, -Rp_z)
+            #     t -= y / yp
 
             # if abs(poly_eval(h_coef, w * (Rp_x * t - ROf_x)) / w - (Rp_z * t - ROf_z)) > 1e-7:
                 # print 's vals (u):', s_poly(roots_u)
@@ -157,8 +156,8 @@ def t_i_k(np.ndarray[np.float64_t, ndim=2] R,
                     yp = fma(poly_eval(hp_coef, u), Rp_x, -Rp_z)
                     t -= y / yp
 
-                # print('{: .4f} {: .4f} {: .8f} {: .8f}'.format(t0, t, y, fabs(y)))
-                if fabs(y) < 1e-7 and t > best_t + 1e-5 and t < 0:
+                print('{: .4f} {: .4f} {: .8f}'.format(t0, t, y))
+                if fabs(y) < 1 and fabs(t) < fabs(best_t) + 1e-5:
                     best_t = t
 
             # if j >= 99:
@@ -175,10 +174,11 @@ def t_i_k(np.ndarray[np.float64_t, ndim=2] R,
         if fabs(y) > 1e-6:
             # print 'big y!', y
             big_ys += 1
+            big_ys_sum += fabs(y)
         t0s[i] = ts[i]
 
     # print 'final ts:', ts
     if big_ys > 0:
-        print 'big ys:', big_ys
+        print 'big ys:', big_ys, 'avg:', big_ys_sum / big_ys
 
     return ts, ts * rays - ROf[:, np.newaxis]

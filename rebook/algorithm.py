@@ -7,6 +7,7 @@ from scipy import interpolate
 
 import lib
 
+from geometry import Line
 from lib import debug_imwrite, is_bw
 from letters import Letter, TextLine
 
@@ -156,9 +157,9 @@ def combine_underlined(AH, im, lines, components):
         if len(close_lines) > 1:
             # print('merging some underlined lines!')
             combined = close_lines[0]
-            lines_set.remove(combined)
+            lines_set.discard(combined)
             for line in close_lines[1:]:
-                lines_set.remove(line)
+                lines_set.discard(line)
                 combined.merge(line)
 
             lines_set.add(combined)
@@ -333,14 +334,25 @@ def fine_dewarp(im, lines):
     points = []
     y_offsets = []
     for line in lines:
+        if len(line) < 10 or abs(line.fit_line().angle()) > 0.001: continue
+        line.fit_line().draw(debug, thickness=1)
         base_points = np.array([letter.base_point() for letter in line.inliers()])
         median_y = np.median(base_points[:, 1])
         y_offsets.append(median_y - base_points[:, 1])
         points.append(base_points)
+
+        for underline in line.underlines:
+            mid_contour = (underline.top_contour() + underline.bottom_contour()) / 2
+            all_mid_points = np.stack([
+                underline.x + np.arange(underline.w), mid_contour,
+            ])
+            mid_points = all_mid_points[:, ::4]
+            points.append(mid_points)
+
         for p in base_points:
             pt = tuple(np.round(p).astype(int))
-            cv2.circle(debug, (pt[0], int(median_y)), 4, lib.RED, -1)
-            cv2.circle(debug, pt, 4, lib.GREEN, -1)
+            cv2.circle(debug, (pt[0], int(median_y)), 2, lib.RED, -1)
+            cv2.circle(debug, pt, 2, lib.GREEN, -1)
     cv2.imwrite('points.png', debug)
 
     points = np.concatenate(points)
@@ -353,13 +365,23 @@ def fine_dewarp(im, lines):
     # mesh[1] += y_offset_interp  # (mesh[0], mesh[1], grid=False)
 
     y_offset_interp = interpolate.SmoothBivariateSpline(
-        points[:, 0], points[:, 1], y_offsets
+        points[:, 0], points[:, 1], y_offsets.clip(-3, 3),
+        s=4 * points.shape[0]
     )
-    ymesh += y_offset_interp(xmesh, ymesh, grid=False)
+    ymesh -= y_offset_interp(xmesh, ymesh, grid=False).clip(-3, 3)
 
     conv_xmesh, conv_ymesh = cv2.convertMaps(xmesh, ymesh, cv2.CV_16SC2)
-    out = cv2.remap(im, conv_xmesh, conv_ymesh, interpolation=cv2.INTER_LINEAR).T
+    out = cv2.remap(im, conv_xmesh, conv_ymesh,
+                    interpolation=cv2.INTER_LINEAR,
+                    borderValue=np.median(im)).T
     cv2.imwrite('corrected.png', out)
+
+    debug = cv2.cvtColor(out, cv2.COLOR_GRAY2BGR)
+    for line in lines:
+        base_points = np.array([letter.base_point() for letter in line.inliers()[1:-1]])
+        base_points[:, 1] -= y_offset_interp(base_points[:, 0], base_points[:, 1], grid=False)
+        Line.fit(base_points).draw(debug, thickness=1)
+    cv2.imwrite('corrected_line.png', debug)
 
     return out
 

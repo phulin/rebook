@@ -58,3 +58,13 @@ def mean_std(im, W):
     stds = np.sqrt(variances.clip(0, None))
 
     return means, stds
+
+def round_point(p):
+    return tuple(np.round(np.atleast_1d(p)).astype(int))
+
+def draw_line(debug, p1, p2, color=GREEN, thickness=2):
+    cv2.line(debug, round_point(p1), round_point(p2), color, thickness)
+
+def draw_circle(debug, p, radius=2, color=GREEN, thickness=cv2.FILLED):
+    cv2.circle(debug, round_point(p), radius, color, thickness)
+

@@ -101,7 +101,8 @@ class TextLine(object):
         self.letters = sorted(letters, key=lambda l: l.x)
         self.model = model
         self.model_line = None
-        self.inliers = None
+        self._inliers = None
+        self._line_inliers = None
         self.underlines = []
 
     def __iter__(self):
@@ -135,7 +136,9 @@ class TextLine(object):
         self.letters.sort(key=lambda l: l.x)
         self.underlines = list(set(self.underlines) | set(other.underlines))
         self.model = None
+        self._inliers = None
         self.model_line = None
+        self._line_inliers = None
 
     def domain(self):
         return self.letters[0].base_point()[0], self.letters[-1].base_point()[0]
@@ -161,9 +164,18 @@ class TextLine(object):
     def base_points(self):
         return np.array([l.base_point() for l in self.letters])
 
+    def crop(self):
+        if self.underlines:
+            return Crop.union(
+                Crop.union_all([l.crop() for l in self.letters]),
+                Crop.union_all([u.crop() for u in self.underlines]),
+            )
+        else:
+            return Crop.union_all([l.crop() for l in self.letters])
+
     class PolyModel5(object):
         def estimate(self, data):
-            self.params = Poly.fit(data[:, 0], data[:, 1], 7, domain=[-1, 1])
+            self.params = Poly.fit(data[:, 0], data[:, 1], 5, domain=[-1, 1])
             return True
 
         def residuals(self, data):
@@ -173,7 +185,7 @@ class TextLine(object):
         if self.model is None:
             model, inliers = ransac(self.base_points(), TextLine.PolyModel5, 10, 4)
             self.model = model.params
-            self.inliers = inliers
+            self._inliers = list(itertools.compress(self.letters, inliers))
 
         return self.model
 
@@ -190,14 +202,19 @@ class TextLine(object):
             if len(self) <= 3:
                 self.model_line = Line.fit(self.base_points())
             else:
-                model, _ = ransac(self.base_points(), TextLine.LineModel, 3, 4)
+                model, inliers = ransac(self.base_points(), TextLine.LineModel, 3, 4)
                 self.model_line = model.params
+                self._line_inliers = list(itertools.compress(self.letters, inliers))
 
         return self.model_line
 
     def inliers(self):
         self.fit_poly()
-        return [l for (l, inlier) in zip(self.letters, self.inliers) if inlier]
+        return self._inliers
+
+    def line_inliers(self):
+        self.fit_line()
+        return self._line_inliers
 
 class Underline(object):
     def __init__(self, label, label_map, stats):
