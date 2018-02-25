@@ -49,7 +49,6 @@ def split_lines(lines, all_lines=None):
             print('right:', lefts[middle_idx:])
             return line_groups, [all_lines[:middle_idx], all_lines[middle_idx:]]
 
-
 def filter_position(AH, im, lines, split):
     new_lines = []
 

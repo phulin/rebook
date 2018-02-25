@@ -67,4 +67,3 @@ def draw_line(debug, p1, p2, color=GREEN, thickness=2):
 
 def draw_circle(debug, p, radius=2, color=GREEN, thickness=cv2.FILLED):
     cv2.circle(debug, round_point(p), radius, color, thickness)
-
