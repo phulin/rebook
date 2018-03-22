@@ -357,44 +357,50 @@ class MulLoss(Loss):
         return self.c * self.inner.jac(x, *args)
 
 class Preproject(Loss):
-    def __init__(self, inner):
+    def __init__(self, inner, base_points, n_pages):
         self.inner = inner
+        self.base_points = base_points
+        self.n_pages = n_pages
         self.last_x = None
         self.last_projection = None
 
-    def project(self, args, base_points, n_pages):
-        theta, _, _, T, l_m, g = unpack_args(args, n_pages)
+    def project(self, args):
+        theta, _, _, T, l_m, g = unpack_args(args, self.n_pages)
         # print '    theta:', theta
         # print '    a_m:', g.coef
 
         if self.last_x is None or self.last_x.shape != args.shape or np.any(args != self.last_x):
             R = R_theta(theta)
             self.last_x = args
-            self.last_projection = E_str_project(R, g, base_points, 0)
+            self.last_projection = E_str_project(R, g, self.base_points, 0)
 
         return self.last_projection
 
-    def residuals(self, args, base_points, n_pages):
-        all_ts_surface = self.project(args, base_points, n_pages)
-        return self.inner.residuals(args, base_points, n_pages, all_ts_surface)
+    def residuals(self, args):
+        all_ts_surface = self.project(args)
+        return self.inner.residuals(args, all_ts_surface)
 
-    def jac(self, args, base_points, n_pages):
-        all_ts_surface = self.project(args, base_points, n_pages)
-        return self.inner.jac(args, base_points, n_pages, all_ts_surface)
+    def jac(self, args):
+        all_ts_surface = self.project(args)
+        return self.inner.jac(args, all_ts_surface)
 
 class Regularize_T(Loss):
-    def residuals(self, args, base_points, n_pages, line_ts_surface):
+    def __init__(self, base_points, n_pages):
+        self.base_points = base_points
+        self.n_pages = n_pages
+
+    def residuals(self, args, line_ts_surface):
         residuals = [ts + 1 for ts, _ in line_ts_surface]
         return np.concatenate(residuals)
 
-    def jac(self, args, base_points, n_pages, line_ts_surface):
-        theta, a_m, _, T, l_m, g = unpack_args(args, n_pages)
+    def jac(self, args, line_ts_surface):
+        theta, a_m, _, T, l_m, g = unpack_args(args, self.n_pages)
         R = R_theta(theta)
         dR = dR_dtheta(theta, R)
 
         gp = g.deriv()
 
-        all_points = np.concatenate(base_points, axis=1)
+        all_points = np.concatenate(self.base_points, axis=1)
         all_ts = np.concatenate([ts for ts, _ in line_ts_surface])
         all_surface = np.concatenate([surface for _, surface in line_ts_surface],
                                      axis=1)
@@ -405,10 +411,16 @@ class Regularize_T(Loss):
         return np.concatenate((
             dtheta,
             dti_dam(R, g, gp, all_points, all_ts, all_surface).T,
-            np.zeros((all_ts.shape[0], 2 * n_pages + 1 + len(base_points)), dtype=np.float64),
+            np.zeros((all_ts.shape[0], 2 * self.n_pages + 1 + len(self.base_points)),
+                     dtype=np.float64),
         ), axis=1)
 
 class E_str(Loss):
+    def __init__(self, base_points, n_pages):
+        self.base_points = base_points
+        self.all_points = np.concatenate(base_points, axis=1)
+        self.n_pages = n_pages
+
     # l_m = fake parameter representing line position
     # base_points = text base points on focal plane
     @staticmethod
@@ -418,35 +430,34 @@ class E_str(Loss):
         residuals = [Ys - l_k for (_, (_, Ys, _)), l_k in zip(all_ts_surface, l_m)]
         return np.concatenate(residuals)
 
-    def residuals(self, args, base_points, n_pages, all_ts_surface):
-        theta, _, _, T, l_m, g = unpack_args(args, n_pages)
+    def residuals(self, args, all_ts_surface):
+        theta, _, _, T, l_m, g = unpack_args(args, self.n_pages)
 
         result = E_str.unpacked(all_ts_surface, l_m)
         print('norm: {:3.6f}, T: {:.1f}'.format(norm(result), T))
         return result
 
-    def jac(self, args, base_points, n_pages, line_ts_surface):
-        theta, a_m, _, T, l_m, g = unpack_args(args, n_pages)
+    def jac(self, args, all_ts_surface):
+        theta, a_m, _, T, l_m, g = unpack_args(args, self.n_pages)
         R = R_theta(theta)
         dR = dR_dtheta(theta, R)
 
         gp = g.deriv()
 
-        all_points = np.concatenate(base_points, axis=1)
-        all_ts = np.concatenate([ts for ts, _ in line_ts_surface])
-        all_surface = np.concatenate([surface for _, surface in line_ts_surface],
+        all_ts = np.concatenate([ts for ts, _ in all_ts_surface])
+        all_surface = np.concatenate([surface for _, surface in all_ts_surface],
                                      axis=1)
 
-        dtheta = dE_str_dtheta(theta, R, dR, g, gp, all_points, all_ts, all_surface)
+        dtheta = dE_str_dtheta(theta, R, dR, g, gp, self.all_points, all_ts, all_surface)
         # dtheta[:, 1] = 0
 
         return np.concatenate((
             # dE_str_dtheta(theta, R, dR, g, gp, all_points, all_ts, all_surface),
             dtheta,
-            dE_str_dam(R, g, gp, all_points, all_ts, all_surface),
-            np.zeros((all_ts.shape[0], 2 * n_pages), dtype=np.float64),
-            dE_str_dT(R, g, gp, all_points, all_ts, all_surface),
-            dE_str_dl_k(base_points),
+            dE_str_dam(R, g, gp, self.all_points, all_ts, all_surface),
+            np.zeros((all_ts.shape[0], 2 * self.n_pages), dtype=np.float64),
+            dE_str_dT(R, g, gp, self.all_points, all_ts, all_surface),
+            dE_str_dl_k(self.base_points),
         ), axis=1)
 
 def dR_dthetai(theta, R, i):
@@ -747,8 +758,7 @@ def make_mesh_2d(all_lines, O, R, g):
 
     try:
         import matplotlib.pyplot as plt
-        from mpl_toolkits.mplot3d import Axes3D
-        print(Axes3D)
+        # from mpl_toolkits.mplot3d import Axes3D
         # ax = Axes3D(plt.figure())
         ax = plt.axes()
         box_XY = Crop.from_points(corners_XYZ[:2]).expand(0.01)
@@ -771,7 +781,7 @@ def make_mesh_2d(all_lines, O, R, g):
         # zs = g(xs)
         # plt.plot(xs, zs)
         ax.set_aspect('equal')
-        plt.show()
+        plt.savefig('dewarp/camera.png')
     except Exception as e:
         print(e)
         import IPython
@@ -996,7 +1006,8 @@ def kim2014(orig):
         [1000] * len(base_points),
     ])
 
-    loss = Preproject(E_str() + Regularize_T() * 5.0)
+    loss = Preproject(E_str(base_points, n_pages) + Regularize_T(base_points, n_pages) * 5.0,
+                      base_points, n_pages)
 
     # result = lm(
     result = opt.least_squares(
@@ -1004,8 +1015,7 @@ def kim2014(orig):
         x0=args_0,
         jac=loss.jac,
         # method='lm',
-        args=(base_points, n_pages),
-        ftol=1e-8,
+        # ftol=1e-8,
         # max_nfev=100,
         # x_scale='jac',
         x_scale=x_scale,
