@@ -294,7 +294,7 @@ def unpack_args(args, n_pages):
     theta, a_m_all, align_all, (T,), l_m = \
         split_lengths(np.array(args), (3, DEGREE * n_pages, 2 * n_pages, 1))
     # T = 0
-    theta[1] = 0.
+    # theta[1] = 0.
 
     a_ms = np.split(a_m_all, n_pages)
     aligns = np.split(align_all, n_pages)
@@ -400,7 +400,7 @@ class Regularize_T(Loss):
                                      axis=1)
 
         dtheta = dti_dtheta(theta, R, dR, g, gp, all_points, all_ts, all_surface).T
-        dtheta[:, 1] = 0
+        # dtheta[:, 1] = 0
 
         return np.concatenate((
             dtheta,
@@ -438,7 +438,7 @@ class E_str(Loss):
                                      axis=1)
 
         dtheta = dE_str_dtheta(theta, R, dR, g, gp, all_points, all_ts, all_surface)
-        dtheta[:, 1] = 0
+        # dtheta[:, 1] = 0
 
         return np.concatenate((
             # dE_str_dtheta(theta, R, dR, g, gp, all_points, all_ts, all_surface),
@@ -533,8 +533,8 @@ def dE_str_dT(R, g, gp, all_points, all_ts, all_surface):
 
     result = (R2.dot(all_points) * gp_val
               / (R1.dot(all_points) * gp_val - R3.dot(all_points)))[:, newaxis]
-    return result
     # return np.zeros(result.shape, dtype=np.float64)
+    return result
 
 def debug_plot_g(g, line_ts_surface):
     import matplotlib.pyplot as plt
@@ -755,14 +755,15 @@ def make_mesh_2d(all_lines, O, R, g):
         # fig = plt.figure()
         # ax = fig.add_subplot(111, projection='3d')
         x_min, y_min, x_max, y_max = box_XY
-        xs = np.linspace(x_min, x_max, 200)
-        ys = np.full(200, 1300.)
-        zs = g(xs)
-        points = np.stack([xs, ys, zs])
-        points_r = inv(R).dot(points + Of[:, newaxis])
-        # print(points_r)
-        # ax.plot(points_r[0], points_r[1], points_r[2])
-        ax.plot(points_r[0], points_r[2])
+        for y in np.linspace(y_min, y_max, 3):
+            xs = np.linspace(x_min, x_max, 200)
+            ys = np.full(200, y)
+            zs = g(xs)
+            points = np.stack([xs, ys, zs])
+            points_r = inv(R).dot(points) + Of[:, newaxis]
+            # print(points_r)
+            # ax.plot(points_r[0], points_r[1], points_r[2])
+            ax.plot(points_r[0], points_r[2])
         base_xs = np.array([corners[0].min(), corners[0].max()])
         base_zs = np.array([-3270.5, -3270.5])
         ax.plot(base_xs, base_zs)
@@ -995,7 +996,7 @@ def kim2014(orig):
         [1000] * len(base_points),
     ])
 
-    loss = Preproject(E_str() + Regularize_T() * 2.0)
+    loss = Preproject(E_str() + Regularize_T() * 5.0)
 
     # result = lm(
     result = opt.least_squares(
