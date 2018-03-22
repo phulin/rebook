@@ -64,10 +64,10 @@ cdef double find_t(np.ndarray[np.float64_t, ndim=1] h_coef,
     done = False
     if isfinite(t0):
         t = t0
-        for j in range(20):
+        for j in range(30):
             u = w * (Rp_x * t - ROf_x - T)
             y = poly_eval(h_coef, u) / w - fma(Rp_z, t, -ROf_z)
-            if fabs(y) < 1e-8:
+            if fabs(y) < 1e-6:
                 # print j
                 break
             yp = fma(poly_eval(hp_coef, u), Rp_x, -Rp_z)
@@ -77,7 +77,7 @@ cdef double find_t(np.ndarray[np.float64_t, ndim=1] h_coef,
         y_minus = poly_eval(h_coef, u_minus) / w - fma(Rp_z, t * 0.99, -ROf_z)
         u_plus = w * (Rp_x * t * 0.01 - ROf_x - T)
         y_plus = poly_eval(h_coef, u_plus) / w - fma(Rp_z, t * 0.01, -ROf_z)
-        if y_minus * y_plus > 0:  # same sign, not obv an intermediate root
+        if y_minus * y_plus > 0 and fabs(y) < 1e-6:  # same sign, not obv an intermediate root
             done = True
         else:
             pass  # print 'warning: need to check all roots!'
@@ -98,6 +98,15 @@ cdef double find_t(np.ndarray[np.float64_t, ndim=1] h_coef,
                 if abs(roots_t_neg[j]) < abs(t):
                     t = roots_t_neg[j]
 
+        for j in range(10):
+            u = w * (Rp_x * t - ROf_x - T)
+            y = poly_eval(h_coef, u) / w - fma(Rp_z, t, -ROf_z)
+            if fabs(y) < 1e-4:
+                # print j
+                break
+            yp = fma(poly_eval(hp_coef, u), Rp_x, -Rp_z)
+            t -= y / yp
+
     t_out = t
 
     if not isfinite(t_out):
@@ -105,7 +114,7 @@ cdef double find_t(np.ndarray[np.float64_t, ndim=1] h_coef,
         best_t = -INFINITY
         for t0 in np.linspace(0, -2.0, 10):
             t = t0
-            for j in range(100):
+            for j in range(50):
                 u = w * (Rp_x * t - ROf_x - T)
                 y = poly_eval(h_coef, u) / w - fma(Rp_z, t, -ROf_z)
                 if fabs(y) < 1e-8: break
@@ -201,7 +210,14 @@ def t_i_k(np.ndarray[np.float64_t, ndim=2] R,
             tl = find_t(hl_coef, hlp_coef, w, T, ROf_x, ROf_z, Rp_x, Rp_z, t0)
             tr = find_t(hr_coef, hrp_coef, w, T, ROf_x, ROf_z, Rp_x, Rp_z, t0)
             if tl < 0 and tr < 0:
-                t = max(tl, tr)
+                xl = Rp_x * tl - ROf_x
+                xr = Rp_x * tr - ROf_x
+                if xl < T and xr > T:
+                    t = tl if fabs(tl + 1) < fabs(tr + 1) else tr
+                else:
+                    t = tl if xl < T else tr
+                # if fabs(y) > 1e-4:
+                #     print '{:1.3f} {:4.0f}; {:1.3f} {:4.0f}'.format(tl, xl, tr, xr)
             else:
                 t = min(tl, tr)
 
@@ -213,7 +229,7 @@ def t_i_k(np.ndarray[np.float64_t, ndim=2] R,
             yr = fabs(poly_eval(hr_coef, u) / w - fma(Rp_z, t, -ROf_z))
             y = min(y, yr)
 
-        if fabs(y) > 1e-6:
+        if fabs(y) > 1e-4:
             # print 'big y 2!', y
             big_ys += 1
             big_ys_sum += y
