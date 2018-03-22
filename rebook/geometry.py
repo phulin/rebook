@@ -185,7 +185,7 @@ class Crop(object):
         ]
 
     def nonempty(self):
-        return self.x0 <= self.x1 and self.y0 <= self.y1
+        return self.x0 < self.x1 and self.y0 < self.y1
 
     def intersect(self, other):
         return Crop(
@@ -243,3 +243,6 @@ class Crop(object):
 
     def __repr__(self):
         return "Crop({}, {}, {}, {})".format(self.x0, self.y0, self.x1, self.y1)
+
+    def __iter__(self):
+        return iter((self.x0, self.y0, self.x1, self.y1))

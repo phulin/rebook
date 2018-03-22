@@ -3,6 +3,7 @@ from __future__ import print_function
 import argparse
 import cv2
 import glob
+import numpy as np
 import os
 import re
 from multiprocessing import cpu_count
@@ -20,7 +21,7 @@ import lib
 extension = '.tif'
 def process_image(original, dpi):
     # original = cv2.resize(original, (0, 0), None, 1.5, 1.5)
-    im_h, im_w = original.shape
+    im_h, im_w = original.shape[:2]
     # image height should be about 10 inches. round to 100
     if not dpi:
         dpi = int(round(im_h / 1100.0) * 100)
@@ -39,6 +40,7 @@ def process_image(original, dpi):
             bw_cropped = c.apply(bw)
             orig_cropped = c.apply(original)
             angle = algorithm.skew_angle(bw_cropped, original, AH, lines)
+            if not np.isfinite(angle): angle = 0.
             rotated = algorithm.safe_rotate(orig_cropped, angle)
 
             rotated_bw = binarize.binarize(rotated, algorithm=binarize.adaptive_otsu)

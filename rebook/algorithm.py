@@ -283,7 +283,7 @@ def dewarp_text(im):
 
 def safe_rotate(im, angle):
     debug_imwrite('prerotated.png', im)
-    im_h, im_w = im.shape
+    im_h, im_w = im.shape[:2]
     if abs(angle) > math.pi / 4:
         print("warning: too much rotation")
         return im
@@ -296,9 +296,10 @@ def safe_rotate(im, angle):
 
     pad_h = int(math.ceil((im_h_new - im_h) / 2))
     pad_w = int(math.ceil((im_w_new - im_w) / 2))
+    pads = ((pad_h, pad_h), (pad_w, pad_w)) + ((0, 0),) * (len(im.shape) - 2)
 
-    padded = np.pad(im, (pad_h, pad_w), 'constant', constant_values=255)
-    padded_h, padded_w = padded.shape
+    padded = np.pad(im, pads, 'constant', constant_values=255)
+    padded_h, padded_w = padded.shape[:2]
     matrix = cv2.getRotationMatrix2D((padded_w / 2, padded_h / 2), angle_deg, 1)
     result = cv2.warpAffine(padded, matrix, (padded_w, padded_h),
                             borderMode=cv2.BORDER_CONSTANT,
@@ -421,6 +422,8 @@ def remove_stroke_outliers(im, lines, k=1.0):
         good_letters = []
         for letter in line:
             crop = letter.crop()
+            if not crop.nonempty(): continue
+
             raster = letter.raster()
             sliced_strokes = crop.apply(stroke_widths).copy()
             sliced_strokes &= lib.bool_to_u8(raster)

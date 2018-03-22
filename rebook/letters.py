@@ -97,13 +97,13 @@ class Letter(object):
     def __repr__(self): return str(self)
 
 class TextLine(object):
-    def __init__(self, letters, model=None, underlines=[]):
+    def __init__(self, letters, model=None, underlines=None):
         self.letters = sorted(letters, key=lambda l: l.x)
         self.model = model
         self.model_line = None
         self._inliers = None
         self._line_inliers = None
-        self.underlines = []
+        self.underlines = underlines if underlines is not None else []
 
     def __iter__(self):
         return (l for l in self.letters)
