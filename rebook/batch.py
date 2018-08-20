@@ -128,7 +128,8 @@ def run(args):
 
     files = []
     accumulate_paths(args.indirs, files)
-    print(files)
+    files = sorted_numeric(list(set(files)))
+    print('Files:', files)
 
     for p in files:
         d = os.path.dirname(p)
