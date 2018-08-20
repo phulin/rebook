@@ -354,9 +354,19 @@ def retinex(im, mu_1=0.9, mu_2=25, sigma=5):
     bools = (im < mu_1 * G) & (cv2.absdiff(im, G) > mu_2)
     return bools.astype(np.uint8)
 
+def premultiply(im):
+    assert im.dtype == np.uint8
+    im32 = im[:, :, :-1].astype(np.uint32)
+    im32 *= im[:, :, -1:]
+    im32 >>= 8
+    return im32.astype(np.uint8)
+
 def grayscale(im, algorithm=CIELab_gray):
     if len(im.shape) > 2:
-        return algorithm(im)
+        if im.shape[2] == 4:
+            return algorithm(premultiply(im))
+        else:
+            return algorithm(im)
     else:
         return im
 
