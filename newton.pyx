@@ -95,17 +95,17 @@ cdef double find_t(np.ndarray[np.float64_t, ndim=1] h_coef,
         if roots_t_neg.shape[0] > 0:
             t = -INFINITY
             for j in range(roots_t_neg.shape[0]):
-                if abs(roots_t_neg[j]) < abs(t):
+                if roots_t_neg[j] > t:
                     t = roots_t_neg[j]
 
-        for j in range(10):
-            u = w * (Rp_x * t - ROf_x - T)
-            y = poly_eval(h_coef, u) / w - fma(Rp_z, t, -ROf_z)
-            if fabs(y) < 1e-4:
-                # print j
-                break
-            yp = fma(poly_eval(hp_coef, u), Rp_x, -Rp_z)
-            t -= y / yp
+        # for j in range(10):
+        #     u = w * (Rp_x * t - ROf_x - T)
+        #     y = poly_eval(h_coef, u) / w - fma(Rp_z, t, -ROf_z)
+        #     if fabs(y) < 1e-4:
+        #         # print j
+        #         break
+        #     yp = fma(poly_eval(hp_coef, u), Rp_x, -Rp_z)
+        #     t -= y / yp
 
     t_out = t
 

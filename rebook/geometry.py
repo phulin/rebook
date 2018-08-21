@@ -161,12 +161,20 @@ class Crop(object):
 
     @staticmethod
     def from_line(line):
-        return Crop(
-            min([letter.x for letter in line]),
-            min([letter.x for letter in line]),
+        result = Crop(
+            min([letter.left() for letter in line]),
+            min([letter.top() for letter in line]),
             max([letter.right() for letter in line]),
             max([letter.bottom() for letter in line])
         )
+        if line.underlines:
+            result = result.union(Crop.union_all((under.crop() for under in line.underlines)))
+
+        return result
+
+    @staticmethod
+    def from_lines(lines):
+        return Crop.union_all((Crop.from_line(line) for line in lines))
 
     @property
     def w(self):
@@ -213,7 +221,8 @@ class Crop(object):
 
     def apply(self, im):
         assert self.nonempty()
-        return im[self.y0:self.y1, self.x0:self.x1]
+        crop = self.intersect(Crop.full(im))
+        return im[crop.y0:crop.y1, crop.x0:crop.x1]
 
     @staticmethod
     def full(im):
@@ -231,10 +240,10 @@ class Crop(object):
 
     def expand(self, factor):
         return Crop(
-            self.x0 - self.w * factor,
-            self.y0 - self.h * factor,
-            self.x1 + self.w * factor,
-            self.y1 + self.h * factor
+            int(round(self.x0 - self.w * factor)),
+            int(round(self.y0 - self.h * factor)),
+            int(round(self.x1 + self.w * factor)),
+            int(round(self.y1 + self.h * factor))
         )
 
     def draw(self, im, color=BLUE, thickness=2):

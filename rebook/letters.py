@@ -221,3 +221,18 @@ class Underline(object):
         self.label = label
         self.label_map = label_map
         self.stats = stats
+
+    @property
+    def x(self): return self.stats[cv2.CC_STAT_LEFT]
+
+    @property
+    def y(self): return self.stats[cv2.CC_STAT_TOP]
+
+    @property
+    def w(self): return self.stats[cv2.CC_STAT_WIDTH]
+
+    @property
+    def h(self): return self.stats[cv2.CC_STAT_HEIGHT]
+
+    def crop(self):
+        return Crop(self.x, self.y, self.x + self.w, self.y + self.h)

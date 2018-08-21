@@ -287,13 +287,13 @@ class SplitPoly(object):
 def split_lengths(array, lengths):
     return np.split(array, np.cumsum(lengths))
 
-DEGREE = 9
+DEGREE = 7
 OMEGA = 1e-1
 def unpack_args(args, n_pages):
     # theta: 3; a_m: DEGREE; align: 2; l_m: len(lines)
     theta, a_m_all, align_all, (T,), l_m = \
         split_lengths(np.array(args), (3, DEGREE * n_pages, 2 * n_pages, 1))
-    # T = 0
+    T = 0
     # theta[1] = 0.
 
     a_ms = np.split(a_m_all, n_pages)
@@ -378,7 +378,10 @@ class Preproject(Loss):
 
     def residuals(self, args):
         all_ts_surface = self.project(args)
-        return self.inner.residuals(args, all_ts_surface)
+        _, _, _, T, _, _ = unpack_args(args, self.n_pages)
+        result =  self.inner.residuals(args, all_ts_surface)
+        print('norm: {:3.6f}, T: {:.1f}'.format(norm(result), T))
+        return result
 
     def jac(self, args):
         all_ts_surface = self.project(args)
@@ -415,11 +418,18 @@ class Regularize_T(Loss):
                      dtype=np.float64),
         ), axis=1)
 
+OUTER_LINE_WEIGHT = 2
+def line_weights(points):
+    return 1 + np.abs(np.linspace(-OUTER_LINE_WEIGHT + 1, OUTER_LINE_WEIGHT - 1, points.shape[-1]))
+
 class E_str(Loss):
-    def __init__(self, base_points, n_pages):
+    def __init__(self, base_points, n_pages, weight_outer=True, scale_t=False):
         self.base_points = base_points
         self.all_points = np.concatenate(base_points, axis=1)
+        self.all_weights = np.concatenate([line_weights(line) for line in self.base_points])
         self.n_pages = n_pages
+        self.weight_outer = weight_outer  # Weight outer letters in line more heavily
+        self.scale_t = scale_t  # Scale by - 1 / t
 
     # l_m = fake parameter representing line position
     # base_points = text base points on focal plane
@@ -432,9 +442,15 @@ class E_str(Loss):
 
     def residuals(self, args, all_ts_surface):
         theta, _, _, T, l_m, g = unpack_args(args, self.n_pages)
-
         result = E_str.unpacked(all_ts_surface, l_m)
-        print('norm: {:3.6f}, T: {:.1f}'.format(norm(result), T))
+
+        if self.weight_outer:
+            result *= self.all_weights
+
+        if self.scale_t:
+            all_ts = np.concatenate([ts for ts, _ in all_ts_surface])
+            result /= -all_ts
+
         return result
 
     def jac(self, args, all_ts_surface):
@@ -447,18 +463,32 @@ class E_str(Loss):
         all_ts = np.concatenate([ts for ts, _ in all_ts_surface])
         all_surface = np.concatenate([surface for _, surface in all_ts_surface],
                                      axis=1)
+        residuals = E_str.unpacked(all_ts_surface, l_m)
 
         dtheta = dE_str_dtheta(theta, R, dR, g, gp, self.all_points, all_ts, all_surface)
+        dam = dE_str_dam(R, g, gp, self.all_points, all_ts, all_surface)
         # dtheta[:, 1] = 0
 
-        return np.concatenate((
-            # dE_str_dtheta(theta, R, dR, g, gp, all_points, all_ts, all_surface),
+        if self.scale_t:
+            dtheta -= residuals[:, newaxis] / all_ts[:, newaxis] * dti_dtheta(theta, R, dR, g, gp, self.all_points, all_ts, all_surface).T
+            dam -= residuals[:, newaxis] / all_ts[:, newaxis] * dti_dam(R, g, gp, self.all_points, all_ts, all_surface).T
+
+        result = np.concatenate((
             dtheta,
-            dE_str_dam(R, g, gp, self.all_points, all_ts, all_surface),
+            dam,
+            # Doesn't depend on alignment:
             np.zeros((all_ts.shape[0], 2 * self.n_pages), dtype=np.float64),
             dE_str_dT(R, g, gp, self.all_points, all_ts, all_surface),
             dE_str_dl_k(self.base_points),
         ), axis=1)
+
+        if self.weight_outer:
+            result *= self.all_weights[:, newaxis]
+
+        if self.scale_t:
+            result /= -all_ts[:, newaxis]
+
+        return result
 
 def dR_dthetai(theta, R, i):
     T = norm(theta)
@@ -544,7 +574,7 @@ def dE_str_dT(R, g, gp, all_points, all_ts, all_surface):
 
     result = (R2.dot(all_points) * gp_val
               / (R1.dot(all_points) * gp_val - R3.dot(all_points)))[:, newaxis]
-    # return np.zeros(result.shape, dtype=np.float64)
+    return np.zeros(result.shape, dtype=np.float64)
     return result
 
 def debug_plot_g(g, line_ts_surface):
@@ -620,16 +650,6 @@ def debug_jac(theta, R, g, l_m, base_points, line_ts_surface):
             - E_str(theta, SplitPoly(g.T - inc, g.left, g.right), l_m, base_points)
         print(diff / (2 * inc))
 
-def side_slice(left, right):
-    assert left or right
-
-    if left and right:
-        return np.s_[:]
-    elif left:
-        return np.s_[:1]
-    else:
-        return np.s_[1:]
-
 E_align_t0s = []
 def E_align_project(R, g, all_points, t0s_idx):
     global E_align_t0s
@@ -640,84 +660,81 @@ def E_align_project(R, g, all_points, t0s_idx):
 
     return newton.t_i_k(R, g, all_points, E_align_t0s[t0s_idx])
 
-def E_align(theta, g, align, side_points, left, right):
-    R = R_theta(theta)
+class E_align(Loss):
+    def __init__(self, side_points, left, right, n_pages):
+        assert left or right
+        self.left, self.right = left, right
+        self.n_pages = n_pages
 
-    all_points = side_points.reshape(3, -1)
+        self.side_points = side_points[:, self.side_slice(), :]
+        self.all_side_points = self.side_points.reshape(3, -1)
 
-    _, (Xs, _, _) = E_align_project(R, g, all_points)
-    Xs.shape = (int(left) + int(right), -1)  # 2 x N
+    def side_slice(self):
+        if self.left and self.right:
+            return np.s_[:]
+        elif self.left:
+            return np.s_[:1]
+        else:
+            return np.s_[1:]
 
-    return (Xs - align[side_slice(left, right), newaxis]).flatten()
+    def E_align(self, theta, g, align):
+        R = R_theta(theta)
 
-def E_align_packed(args, all_side_points, left, right):
-    theta, _, aligns, T, _, g = unpack_args(args, len(all_side_points))
-    side_points = all_side_points[:, side_slice(left, right), :]
-    return E_align(theta, g, align, side_points, left, right)
+        _, (Xs, _, _) = E_align_project(R, g, self.all_side_points, 0)
+        Xs.shape = (int(self.left) + int(self.right), -1)  # 2 x N
+        print(align)
+        print(align[self.side_slice()])
+        print(Xs)
 
-def dE_align_dam(theta, R, g, gp, all_points, all_ts, all_surface):
-    R1, _, _ = R
+        return (Xs - align[(self.side_slice(), newaxis)]).flatten()
 
-    dt = dti_dam(theta, R, g, gp, all_points, all_ts, all_surface)
+    def residuals(self, args, all_ts_surface):
+        theta, _, align, T, _, g = unpack_args(args, self.n_pages)
+        return self.E_align(theta, g, align)
 
-    return (R1.dot(all_points) * dt).T
+    def dE_align_dam(self, theta, R, g, gp, all_ts, all_surface):
+        R1, _, _ = R
 
-def dE_align_dtheta(theta, R, dR, g, gp, all_points, all_ts, all_surface):
-    R1, _, _ = R
-    dR1 = dR[:, 0]
-    dR13 = dR[:, 0, 2]
+        dt = dti_dam(theta, R, g, gp, self.all_side_points, all_ts, all_surface)
 
-    dt = dti_dtheta(theta, R, dR, g, gp, all_points, all_ts, all_surface)
+        return (R1.dot(all_points) * dt).T
 
-    term1 = dR1.dot(all_points) * all_ts
-    term2 = R1.dot(all_points) * dt
-    term3 = -dR13 * f
+    def dE_align_dtheta(self, theta, R, dR, g, gp, all_ts, all_surface):
+        R1, _, _ = R
+        dR1 = dR[:, 0]
+        dR13 = dR[:, 0, 2]
 
-    return term1.T + term2.T + term3
+        dt = dti_dtheta(theta, R, dR, g, gp, self.all_side_points, all_ts, all_surface)
 
-def Jac_E_align(args, all_side_points, base_points, left, right):
-    theta, a_m, _, _, _, g = unpack_args(args, len(base_points))
-    R = R_theta(theta)
-    dR = dR_dtheta(theta, R)
-    gp = g.deriv()
+        term1 = dR1.dot(self.all_side_points) * all_ts
+        term2 = R1.dot(self.all_side_points) * dt
+        term3 = -dR13 * f
 
-    side_points = all_side_points[:, side_slice(left, right), :]
-    N = side_points.shape[-1]  # number of lines; 2N residuals
-    n_align = int(left) + int(right)
+        return term1.T + term2.T + term3
 
-    all_points = side_points.reshape(3, n_align * N)
-    all_ts, all_surface= E_align_project(R, g, all_points)
+    def jac(self, args):
+        theta, a_m, _, _, _, g = unpack_args(args, self.n_pages)
+        R = R_theta(theta)
+        dR = dR_dtheta(theta, R)
+        gp = g.deriv()
 
-    align_jac = []
-    if left:
-        align_jac.append([-1, 0])
-    if right:
-        align_jac.append([0, -1])
+        N = self.side_points.shape[-1]  # number of lines; 2N residuals
+        n_align = int(left) + int(right)
 
-    # print(dE_align_dtheta(theta, R, dR, g, gp, all_points, all_ts, all_surface).shape)
-    # print(dE_align_dam(theta, R, g, gp, all_points, all_ts, all_surface).shape)
-    # print(np.tile(align_jac, (N, 1)).shape)
-    # print(np.zeros((n_align * N, len(base_points))).shape)
-    return np.concatenate((
-        dE_align_dtheta(theta, R, dR, g, gp, all_points, all_ts, all_surface),
-        dE_align_dam(theta, R, g, gp, all_points, all_ts, all_surface),
-        np.tile(align_jac, (N, 1)),
-        np.zeros((n_align * N, len(base_points)))
-    ), axis=1)
+        all_ts, all_surface = E_align_project(R, g, self.all_side_points)
 
-LAMBDA_2 = 0.1
-def E_2(args, side_points, base_points, left, right):
-    E_str_out = E_str_packed(args, base_points)
-    E_align_out = LAMBDA_2 * E_align_packed(args, side_points, left, right)
-    result = np.concatenate([E_str_out, E_align_out])
-    print('norm:', norm(result), '=', norm(E_str_out), '+', norm(E_align_out))
-    return result
+        align_jac = []
+        if self.left:
+            align_jac.append([-1, 0])
+        if self.right:
+            align_jac.append([0, -1])
 
-def Jac_E_2(args, side_points, base_points, left, right):
-    return np.concatenate([
-        Jac_E_str(args, base_points),
-        LAMBDA_2 * Jac_E_align(args, side_points, base_points, left, right)
-    ])
+        return np.concatenate((
+            dE_align_dtheta(theta, R, dR, g, gp, all_points, all_ts, all_surface),
+            dE_align_dam(theta, R, g, gp, all_points, all_ts, all_surface),
+            np.tile(align_jac, (N, 1)),
+            np.zeros((n_align * N, len(base_points)))
+        ), axis=1)
 
 def make_mesh_XYZ(xs, ys, g):
     return np.array([
@@ -830,7 +847,8 @@ def make_mesh_2d_indiv(all_lines, corners_XYZ, O, R, g):
 
     return mesh_2d.transpose(1, 2, 0)
 
-def lm(fun, x0, jac, args=(), kwargs={}, ftol=1e-6, max_nfev=10000, x_scale=None):
+def lm(fun, x0, jac, args=(), kwargs={}, ftol=1e-6, max_nfev=10000, x_scale=None,
+       geodesic_accel=False, uphill_steps=False):
     LAM_UP = 1.5
     LAM_DOWN = 5.
 
@@ -850,15 +868,15 @@ def lm(fun, x0, jac, args=(), kwargs={}, ftol=1e-6, max_nfev=10000, x_scale=None
 
     I = np.eye(Js.shape[1])
 
-    for _ in range(max_nfev):
+    for step in range(max_nfev):
         xs_new = xs - solve(JsTJs + lam * I, dC)
         x_new = xs_new * x_scale
 
         r_new = fun(x_new, *args, **kwargs)
         C_new = dot(r_new, r_new) / 2
-        # print('trying step: size {:.3g}, C {:.3g}, lam {:.3g}'.format(
-        #     norm(x - x_new), C_new, lam
-        # ))
+        print('trying step: size {:.3g}, C {:.3g}, lam {:.3g}'.format(
+            norm(x - x_new), C_new, lam
+        ))
         # print(x - x_new)
         if C_new >= C:
             lam *= LAM_UP
@@ -887,11 +905,22 @@ def lm(fun, x0, jac, args=(), kwargs={}, ftol=1e-6, max_nfev=10000, x_scale=None
 
 def initial_args(lines, O, AH, n_pages):
     # Estimate viewpoint from vanishing point
-    pages = crop.split_lines(lines)
-    vx, vy = np.mean([estimate_vanishing(AH, page) for page in pages]) - O
+    pages = crop.split_lines(lines) if n_pages > 1 else [lines]
+    vanishing_points = [estimate_vanishing(AH, page) for page in pages]
+    mean_image_vanishing = np.mean(vanishing_points, axis=0)
+    vanishing = np.concatenate([mean_image_vanishing - O, [-f]])
+    vx, vy, _ = vanishing
+    print(' v:', vanishing)
 
-    theta_0 = [atan2(-vy, f) - pi / 2, 0, 0]
+    xz_ratio = -f / vx  # theta_x / theta_z
+    norm_theta_sq = (atan2(np.sqrt(vx ** 2 + f ** 2), vy) - pi) ** 2
+    theta_z = np.sqrt(norm_theta_sq / (xz_ratio ** 2 + 1))
+    theta_x = xz_ratio * theta_z
+
+    theta_0 = np.array([theta_x, 0, theta_z])
     print('theta_0:', theta_0)
+    print('theta_0 dot ey:', theta_0.dot(np.array([0, 1, 0])))
+    print('theta_0 dot v:', theta_0.dot(vanishing))
 
     # flat surface as initial guess.
     # NB: coeff 0 forced to 0 here. not included in opt.
@@ -899,6 +928,7 @@ def initial_args(lines, O, AH, n_pages):
 
     R_0 = R_theta(theta_0)
     _, ROf_y, ROf_z = R_0.dot(Of)
+    print('Rv:', R_0.dot(np.array((vx, vy, -f))))
 
     # line points on focal plane
     base_points = [line_base_points(line, O) for line in lines]
@@ -916,7 +946,7 @@ def initial_args(lines, O, AH, n_pages):
             all_mid_points = np.stack([
                 underline.x + np.arange(underline.w), mid_contour,
             ])
-            mid_points = all_mid_points[:, ::5]
+            mid_points = all_mid_points[:, :]
             for p1, p2 in zip(mid_points.T, mid_points.T[1:]):
                 draw_line(debug, p1, p2, color=lib.BLUE)
 
@@ -969,9 +999,7 @@ def lsq(func, jac, x_scale):
 
     return result
 
-def kim2014(orig):
-    lib.debug_prefix = 'dewarp/'
-
+def kim2014(orig, split=True):
     im = binarize.binarize(orig, algorithm=lambda im: binarize.sauvola(im, k=0.1))
     global bw
     bw = im
@@ -982,13 +1010,33 @@ def kim2014(orig):
 
     O = np.array((im_w / 2.0, im_h / 2.0))
 
-    # Test if line start distribution is bimodal.
-    line_xs = np.array([line.left() for line in lines])
-    bimodal = line_xs.std() / im_w > 0.10
-    dual = bimodal and im_w > im_h
+    if split:
+        # Test if line start distribution is bimodal.
+        line_xs = np.array([line.left() for line in lines])
+        bimodal = line_xs.std() / im_w > 0.10
+        dual = bimodal and im_w > im_h
 
-    if dual:
-        print('Bimodal! Splitting page!')
+        if dual:
+            print('Bimodal! Splitting page!')
+            pages = crop.split_lines(lines)
+
+            debug = cv2.cvtColor(bw, cv2.COLOR_GRAY2BGR)
+            for page in pages:
+                page_crop = Crop.from_lines(page).expand(0.005)
+                print(page_crop)
+                page_crop.draw(debug)
+            lib.debug_imwrite('split.png', debug)
+
+            for i, page in enumerate(pages):
+                page_image = Crop.from_lines(page).expand(0.005).apply(im)
+                lib.debug_prefix = 'dewarp/'
+                lib.debug_imwrite('page{}.png'.format(i), page_image)
+                lib.debug_prefix = 'dewarp{}/'.format(i)
+                yield kim2014(page_image).next()
+
+            return
+    else:
+        dual = False
 
     lines.sort(key=lambda line: line[0].y)
 
@@ -1006,7 +1054,9 @@ def kim2014(orig):
         [1000] * len(base_points),
     ])
 
-    loss = Preproject(E_str(base_points, n_pages) + Regularize_T(base_points, n_pages) * 5.0,
+    loss = Preproject(E_str(base_points, n_pages, scale_t=False),
+                      # + Regularize_T(base_points, n_pages) * 100.0,
+                      # + E_align(side_points, True, True, n_pages),
                       base_points, n_pages)
 
     # result = lm(
@@ -1015,8 +1065,8 @@ def kim2014(orig):
         x0=args_0,
         jac=loss.jac,
         # method='lm',
-        # ftol=1e-8,
-        # max_nfev=100,
+        ftol=1e-4,
+        # max_nfev=1,
         # x_scale='jac',
         x_scale=x_scale,
     )
@@ -1032,6 +1082,7 @@ def kim2014(orig):
     #     args=(base_points, n_pages),
     # )
 
+    print("scale:")
     print(result.x / x_scale)
     # theta, a_m, align, l_m, g = unpack_args(result)
     # final_norm = norm(E_0(result, base_points))
@@ -1066,13 +1117,14 @@ def kim2014(orig):
         for p0, p1 in zip(line_2d, line_2d[1:]):
             draw_line(debug, p0, p1, GREEN, 1)
 
-    line_Xs = np.array([g.T, g.T])
-    line_Ys = np.array([-10000, 10000])
-    line_Zs = g(line_Xs)
-    line_XYZ = np.stack([line_Xs, line_Ys, line_Zs])
-    line_2d = gcs_to_image(line_XYZ, O, R).T
-    for p0, p1 in zip(line_2d, line_2d[1:]):
-        draw_line(debug, p0, p1, RED, 4)
+    if isinstance(g, SplitPoly):
+        line_Xs = np.array([g.T, g.T])
+        line_Ys = np.array([-10000, 10000])
+        line_Zs = g(line_Xs)
+        line_XYZ = np.stack([line_Xs, line_Ys, line_Zs])
+        line_2d = gcs_to_image(line_XYZ, O, R).T
+        for p0, p1 in zip(line_2d, line_2d[1:]):
+            draw_line(debug, p0, p1, RED, 4)
 
     lib.debug_imwrite('surface_lines.png', debug)
 
@@ -1087,6 +1139,7 @@ def kim2014(orig):
 def go(argv):
     im = cv2.imread(argv[1], cv2.IMREAD_UNCHANGED)
     lib.debug = True
+    lib.debug_prefix = 'dewarp/'
     np.set_printoptions(linewidth=170, precision=4)
     out = kim2014(im)
     for i, outimg in enumerate(out):
