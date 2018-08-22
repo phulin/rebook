@@ -13,57 +13,73 @@ from subprocess import check_call
 
 import algorithm
 import binarize
+import dewarp
 from crop import crop
 from geometry import Crop
 from lib import debug_imwrite
 import lib
 
 extension = '.tif'
-def process_image(original, dpi):
+def process_image(original, dpi=None):
     # original = cv2.resize(original, (0, 0), None, 1.5, 1.5)
     im_h, im_w = original.shape[:2]
     # image height should be about 10 inches. round to 100
     if not dpi:
         dpi = int(round(im_h / 1100.0) * 100)
         print('detected dpi:', dpi)
+
     split = im_w > im_h # two pages
 
-    bw = binarize.binarize(original, algorithm=binarize.adaptive_otsu, resize=1.0)
-    debug_imwrite('thresholded.png', bw)
-    AH, line_sets = crop(original, bw, split=split)
+    cropped_images = []
+    if args.dewarp:
+        dewarped_images = dewarp.kim2014(original)
+        # for im in dewarped_images:
+        #     bw = binarize.binarize(im, algorithm=binarize.adaptive_otsu, resize=1.0)
+        #     _, [lines] = crop(im, bw, split=False)
+        #     c = Crop.from_lines(lines)
+        #     if c.nonempty():
+        #         cropped_images.append(c.apply(im))
+        cropped_images.extend(list(dewarped_images))
+    else:
+        bw = binarize.binarize(original, algorithm=binarize.adaptive_otsu, resize=1.0)
+        debug_imwrite('thresholded.png', bw)
+        AH, line_sets = crop(original, bw, split=split)
+
+        for lines in line_sets:
+            c = Crop.from_lines(lines)
+            if c.nonempty():
+                lib.debug = False
+                bw_cropped = c.apply(bw)
+                orig_cropped = c.apply(original)
+                angle = algorithm.skew_angle(bw_cropped, original, AH, lines)
+                if not np.isfinite(angle): angle = 0.
+                rotated = algorithm.safe_rotate(orig_cropped, angle)
+
+                rotated_bw = binarize.binarize(rotated, algorithm=binarize.adaptive_otsu)
+                _, [new_lines] = crop(rotated, rotated_bw, split=False)
+
+                # dewarped = algorithm.fine_dewarp(rotated, new_lines)
+                # _, [new_lines] = crop(rotated, rotated_bw, split=False)
+                new_crop = Crop.union_all([line.crop() for line in new_lines])
+
+                if new_crop.nonempty():
+                    # cropped = new_crop.apply(dewarped)
+                    cropped = new_crop.apply(rotated)
+                    cropped_images.append(cropped)
 
     outimgs = []
-    for lines in line_sets:
-        c = Crop.union_all([line.crop() for line in lines])
-        if c.nonempty():
-            lib.debug = False
-            bw_cropped = c.apply(bw)
-            orig_cropped = c.apply(original)
-            angle = algorithm.skew_angle(bw_cropped, original, AH, lines)
-            if not np.isfinite(angle): angle = 0.
-            rotated = algorithm.safe_rotate(orig_cropped, angle)
-
-            rotated_bw = binarize.binarize(rotated, algorithm=binarize.adaptive_otsu)
-            _, [new_lines] = crop(rotated, rotated_bw, split=False)
-
-            # dewarped = algorithm.fine_dewarp(rotated, new_lines)
-            # _, [new_lines] = crop(rotated, rotated_bw, split=False)
-            new_crop = Crop.union_all([line.crop() for line in new_lines])
-
-            if new_crop.nonempty():
-                # cropped = new_crop.apply(dewarped)
-                cropped = new_crop.apply(rotated)
-                if lib.is_bw(original):
-                    outimgs.append(binarize.otsu(cropped))
-                else:
-                    outimgs.append(
-                        binarize.ng2014_normalize(binarize.grayscale(cropped))
-                    )
+    for cropped in cropped_images:
+        if lib.is_bw(original):
+            outimgs.append(binarize.otsu(cropped))
+        else:
+            outimgs.append(
+                binarize.ng2014_normalize(binarize.grayscale(cropped))
+            )
 
     return dpi, outimgs
 
-def process_file(args):
-    (inpath, outdir, dpi) = args
+def process_file(file_args):
+    (inpath, outdir, dpi) = file_args
     outfiles = glob.glob('{}/{}_*{}'.format(outdir, inpath[:-4], extension))
     if outfiles:
         print('skipping', inpath)
@@ -76,7 +92,7 @@ def process_file(args):
         print('processing', inpath)
 
     original = cv2.imread(inpath, cv2.IMREAD_UNCHANGED)
-    dpi, outimgs = process_image(original, dpi)
+    dpi, outimgs = process_image(original, dpi=dpi)
     for idx, outimg in enumerate(outimgs):
         outfile = '{}/{}_{}{}'.format(outdir, inpath[:-4], idx, extension)
         print('    writing', outfile)
@@ -115,7 +131,7 @@ def run(args):
     if args.single_file:
         lib.debug = True
         im = cv2.imread(args.single_file, cv2.IMREAD_UNCHANGED)
-        _, outimgs = process_image(im, args.dpi)
+        _, outimgs = process_image(im, dpi=args.dpi)
         for idx, outimg in enumerate(outimgs):
             cv2.imwrite('out{}.png'.format(idx), outimg)
         return
@@ -166,5 +182,8 @@ if __name__ == '__main__':
                         help="Run w/ threads.")
     parser.add_argument('-d', '--dpi', action='store', type=int,
                         help="Force a particular DPI")
+    parser.add_argument('--dewarp', action='store_true', help="Dewarp pages.")
 
-    run(parser.parse_args())
+    global args
+    args = parser.parse_args()
+    run(args)
