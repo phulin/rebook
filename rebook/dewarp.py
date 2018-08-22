@@ -344,7 +344,6 @@ class AddLoss(Loss):
     def jac(self, x, *args):
         a_jac = self.a.jac(x, *args)
         b_jac = self.b.jac(x, *args)
-        print(a_jac.shape, b_jac.shape)
         return np.concatenate((a_jac, b_jac))
 
 class MulLoss(Loss):
@@ -703,11 +702,7 @@ class E_align_page(Loss):
         _, (Xs, _, _) = E_align_project(R, g, self.all_side_points, 0)
         Xs.shape = (self.n_align(), -1)  # [side, line]
 
-        result = (Xs - align[self.side_slice()][:, newaxis]).flatten()
-        print()
-        print(align)
-        print(result)
-        return result
+        return (Xs - align[self.side_slice()][:, newaxis]).flatten()
 
     def residuals(self, args):
         theta, _, align_all, T, _, g = unpack_args(args, self.n_pages)
@@ -1084,7 +1079,7 @@ def kim2014(orig, split=True):
             lib.debug_imwrite('split.png', debug)
 
             for i, page in enumerate(pages):
-                page_image = Crop.from_lines(page).expand(0.002).apply(im)
+                page_image = Crop.from_lines(page).expand(0.002).apply(orig)
                 lib.debug_prefix = 'dewarp/'
                 lib.debug_imwrite('precrop{}.png'.format(i), im)
                 lib.debug_imwrite('page{}.png'.format(i), page_image)
@@ -1116,9 +1111,9 @@ def kim2014(orig, split=True):
 
     loss = DebugLoss(
         Preproject(E_str(base_points, n_pages, scale_t=False)
-                      + Regularize_T(base_points, n_pages) * 1.0,  # This just makes sure nothing crazy happens.
+                      + Regularize_T(base_points, n_pages) * 0.2,  # This just makes sure nothing crazy happens.
                       base_points, n_pages) \
-        + make_E_align(pages, AH, O) * 0.1
+        + make_E_align(pages, AH, O) * 0.2
     )
 
     # result = lm(
@@ -1203,6 +1198,7 @@ def kim2014(orig, split=True):
 
     mesh_2ds = make_mesh_2d(lines, O, R, g)
     for mesh_2d in mesh_2ds:
+        lib.debug_imwrite('orig.png', orig)
         first_pass = correct_geometry(orig, mesh_2d, interpolation=cv2.INTER_LANCZOS4)
         yield first_pass
 
@@ -1213,11 +1209,11 @@ def go(argv):
     np.set_printoptions(linewidth=130, precision=4)
     out = kim2014(im)
     for i, outimg in enumerate(out):
-        gray = binarize.grayscale(outimg).astype(np.float64)
-        gray -= np.percentile(gray, 2)
-        gray *= 255 / np.percentile(gray, 95)
-        norm = binarize.ng2014_normalize(lib.clip_u8(gray))
-        cv2.imwrite('dewarped{}.png'.format(i), norm)
+        # gray = binarize.grayscale(outimg).astype(np.float64)
+        # gray -= np.percentile(gray, 2)
+        # gray *= 255 / np.percentile(gray, 95)
+        # norm = binarize.ng2014_normalize(lib.clip_u8(gray))
+        cv2.imwrite('dewarped{}.png'.format(i), outimg)
 
 if __name__ == '__main__':
     go(sys.argv)

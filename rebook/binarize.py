@@ -217,7 +217,6 @@ def yan(im, alpha=0.4):
                   alpha / 3 * (mins + means + means))
 
     result = kamel(im, s=stroke_width, T=Ts)
-    debug_imwrite('yan_{}.png'.format(alpha), result)
     return result
 
 def median_downsample(row, step):
@@ -311,10 +310,10 @@ def lu2010(im):
     debug_imwrite('n_e.png', bool_to_u8(N_e >= N_min))
 
     E_mean = cv2.boxFilter(im_high, cv2.CV_32S, window,
-                           normalize=False) / N_e
+                           normalize=False) / (N_e.astype(np.float64) + 0.1)
     debug_imwrite('i_bar_e_mean.png', bool_to_u8(I_bar <= E_mean))
 
-    out = bool_to_u8((N_e >= N_min) & (I_bar <= E_mean))
+    out = ~bool_to_u8((N_e >= N_min) & (I_bar <= E_mean))
     debug_imwrite('lu2010.png', out)
     return out
 
@@ -352,7 +351,7 @@ def retinex(im, mu_1=0.9, mu_2=25, sigma=5):
     G = cv2.GaussianBlur(im, (0, 0), sigma)
     debug_imwrite('G.png', G)
     bools = (im < mu_1 * G) & (cv2.absdiff(im, G) > mu_2)
-    return bools.astype(np.uint8)
+    return bool_to_u8(bools)
 
 def premultiply(im):
     assert im.dtype == np.uint8
@@ -381,16 +380,15 @@ def binarize(im, algorithm=adaptive_otsu, gray=CIELab_gray, resize=1.0):
 def go(argv):
     im = cv2.imread(argv[1], cv2.IMREAD_UNCHANGED)
     lib.debug = True
-    lib.debug_prefix = 'ng2014/'
-    cv2.imwrite('ng2014.png', binarize(im, algorithm=ntirogiannis2014))
-    # cv2.imwrite('ng2014_hls.png', binarize(im, algorithm=ntirogiannis2014,
+    lib.debug_prefix = 'binarize/'
+    lib.debug_imwrite('ng2014.png', binarize(im, algorithm=ntirogiannis2014))
+    # lib.debug_imwrite('ng2014_hls.png', binarize(im, algorithm=ntirogiannis2014,
     #                                        gray=hls_gray))
-    cv2.imwrite('ng2014_pca.png', binarize(im, algorithm=ntirogiannis2014,
-                                           gray=pca_gray))
-    lib.debug_prefix = 'yan/'
-    cv2.imwrite('yan.png', binarize(im, algorithm=yan))
-    lib.debug_prefix = 'lu2010/'
-    cv2.imwrite('lu2010.png', binarize(im, algorithm=lu2010))
+    lib.debug_imwrite('yan.png', binarize(im, algorithm=yan))
+    lib.debug_imwrite('lu2010.png', binarize(im, algorithm=lu2010))
+    lib.debug_imwrite('sauvola.png', binarize(im, algorithm=sauvola))
+    lib.debug_imwrite('sauvola_ng2014.png', binarize(im, algorithm=lambda im: sauvola(ng2014_normalize(im))))
+    lib.debug_imwrite('retinex.png', binarize(im, algorithm=retinex))
 
 if __name__ == '__main__':
     go(sys.argv)

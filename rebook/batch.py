@@ -33,12 +33,12 @@ def process_image(original, dpi=None):
     cropped_images = []
     if args.dewarp:
         dewarped_images = dewarp.kim2014(original)
-        # for im in dewarped_images:
-        #     bw = binarize.binarize(im, algorithm=binarize.adaptive_otsu, resize=1.0)
-        #     _, [lines] = crop(im, bw, split=False)
-        #     c = Crop.from_lines(lines)
-        #     if c.nonempty():
-        #         cropped_images.append(c.apply(im))
+        for im in dewarped_images:
+            bw = binarize.binarize(im, algorithm=binarize.adaptive_otsu, resize=1.0)
+            _, [lines] = crop(im, bw, split=False)
+            c = Crop.from_lines(lines)
+            if c.nonempty():
+                cropped_images.append(c.apply(im))
         cropped_images.extend(list(dewarped_images))
     else:
         bw = binarize.binarize(original, algorithm=binarize.adaptive_otsu, resize=1.0)
@@ -73,7 +73,7 @@ def process_image(original, dpi=None):
             outimgs.append(binarize.otsu(cropped))
         else:
             outimgs.append(
-                binarize.ng2014_normalize(binarize.grayscale(cropped))
+                binarize.sauvola(binarize.grayscale(cropped))
             )
 
     return dpi, outimgs
