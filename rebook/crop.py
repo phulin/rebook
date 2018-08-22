@@ -24,7 +24,8 @@ def split_lines(lines, all_lines=None):
         current_r = max(current_r, line.right())
         x2 = lines[idx + 1].left()
         if lib.debug:
-            pass  # print('x2:', x2, 'r:', current_r, 'quantity:', x2 - current_r)
+            pass
+            # print('x2:', x2, 'r:', current_r, 'quantity:', x2 - current_r)
         if x2 - current_r > quantity:
             quantity = x2 - current_r
             argmax = idx

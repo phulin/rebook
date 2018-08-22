@@ -226,12 +226,12 @@ class Crop(object):
 
     @staticmethod
     def full(im):
-        h, w = im.shape
+        h, w = im.shape[:2]
         return Crop(0, 0, w, h)
 
     @staticmethod
     def null(im):
-        h, w = im.shape
+        h, w = im.shape[:2]
         return Crop(w, h, 0, 0)
 
     @staticmethod
