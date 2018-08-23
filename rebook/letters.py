@@ -77,6 +77,9 @@ class Letter(object):
     def crop(self):
         return Crop(self.x, self.y, self.x + self.w, self.y + self.h)
 
+    def slice(self, im):
+        return self.crop().apply(im)
+
     def raster(self):
         sliced = self.crop().apply(self.label_map)
         return sliced == self.label

@@ -5,6 +5,7 @@ import numpy as np
 import numpy.polynomial.polynomial as poly
 import sys
 
+import algorithm
 import inpaint
 import lib
 
@@ -56,16 +57,19 @@ def teager(im):
         - padded[1:-1, 2:] * padded[1:-1, :-2])
 
 def ng2014_normalize(im):
-    IM = cv2.erode(sauvola(im, window_size=31, k=0.1), rect55)
-    IM = cv2.erode(IM, rect55)
+    IM = cv2.erode(niblack(im, window_size=61, k=-0.2), rect55)
+    IM = cv2.erode(IM, rect33)
     debug_imwrite('niblack.png', IM)
 
-    inpainted, modified = inpaint.inpaint_ng14(im, -IM)
+    inpainted_min, inpainted_avg, modified = inpaint.inpaint_ng14(im, -IM)
     # TODO: get inpainted with avg as well
-    debug_imwrite('inpainted.png', inpainted)
+    debug_imwrite('inpainted_min.png', inpainted_min)
+    debug_imwrite('inpainted_avg.png', inpainted_avg)
 
-    bg = (inpainted & ~IM) | (modified & IM)
+    bg = (inpainted_min & ~IM) | (modified & IM)
     debug_imwrite('bg.png', bg)
+    bgp = (inpainted_avg & ~IM) | (modified & IM)
+    debug_imwrite('bgp.png', bg)
 
     im_f = im.astype(float) + 1
     bg_f = bg.astype(float) + 1
@@ -73,44 +77,121 @@ def ng2014_normalize(im):
     N = clip_u8(255 * (F - F.min()))
     debug_imwrite('N.png', N)
 
-    return N
+    return N, bgp
 
+class HeightMap(object):
+    def __init__(self, letters):
+        self.letters = sorted(letters, key=lambda l: l.h)
+
+        idx = 0
+        unique_values, unique_indices = np.unique([l.h for l in self.letters],
+                                                  return_index=True)
+
+        # map from height -> start of range containing height in letters
+        self.start_indices = [0]
+        for idx, v1, v2 in zip(unique_indices, np.concatenate([[0], unique_values]), unique_values):
+            self.start_indices.extend([idx] * (v2 - v1))
+
+        self.start_indices.append(len(self.letters))
+
+        self.total_area = sum((letter.area() for letter in self.letters))
+
+    def max_height(self):
+        return self.letters[-1].h
+
+    def height_area(self, height):
+        return sum((letter.area() for letter in self[height]))
+
+    # RC_j in paper
+    def ratio_components(self, height):
+        return float(len(self[height])) / len(self.letters)
+
+    # RP_j in paper
+    def ratio_pixels(self, height):
+        return float(self.height_area(height)) / self.total_area
+
+    def __getitem__(self, height):
+        idx1 = self.start_indices[height]
+        idx2 = self.start_indices[height + 1]
+        return self.letters[idx1:idx2]
+
+@lib.timeit
 def ntirogiannis2014(im):
     im_h, _ = im.shape
-    N = ng2014_normalize(im)
-    O = otsu(im)
+    N, BG_prime = ng2014_normalize(im)
+    O = otsu(N)
 
-    # TODO: use actual skeletonization system and CC filtering
-    strokes = fast_stroke_width(O)
+    debug_imwrite('O.png', O)
+    letters = algorithm.all_letters(O)
+    height_map = HeightMap(letters)
+
+    ratio_sum = 0
+    for h in range(1, height_map.max_height() + 1):
+        ratio_sum += height_map.ratio_pixels(h) / height_map.ratio_components(h)
+        if ratio_sum > 1:
+            break
+
+    min_height = h
+
+    print('Accept components only >= height', h)
+    print(letters[0].label_map)
+
+    OP = O.copy()
+    for h in range(1, min_height):
+        for letter in height_map[h]:
+            sliced = letter.slice(OP)
+            np.place(sliced, letter.raster(), 255)
+    debug_imwrite('OP.png', OP)
+
+    strokes = fast_stroke_width(OP)
     debug_imwrite('strokes.png', normalize_u8(strokes.clip(0, 10)))
     SW = int(round(strokes.sum() / np.count_nonzero(strokes)))
     print('SW =', SW)
 
-    BG_count = np.count_nonzero(O)
-    FG_count = O.size - BG_count
-    O_16 = O.astype(np.int16)
-    O_inv = ~O
-    O_inv_16 = O_inv.astype(np.int16)
+    # FIXME: implement real skeletonization algorithm here.
+    S = cv2.dilate(OP, cross33)
+    debug_imwrite('fake_skeleton.png', S)
 
-    FG = (O_inv & N).astype(np.int16)
-    FG_avg = FG.sum() / FG_count
-    FG_std = (O_inv_16 & abs(FG - FG_avg)).sum() / float(FG_count)
+    S_inv = ~S
+    S_inv_32 = S_inv.astype(np.int32)
 
-    BG = (O & N).astype(np.int16)
-    BG_avg = BG.sum() / BG_count
-    BG_std = (O_16 & abs(BG - BG_avg)).sum() / float(BG_count)
+    FG_count = np.count_nonzero(S_inv)
+    FG_pos = im[S_inv.astype(bool)]
+    FG_avg = FG_pos.mean()
+    FG_std = FG_pos.std()
+    # FG = (S_inv & im).astype(np.int32)
+    # FG_avg = FG.sum() / float(FG_count)
+    # FG_std = np.sqrt(((S_inv_32 & (FG - FG_avg)) ** 2).sum() / float(FG_count))
+    print('FG:', FG_avg, FG_std)
+
+    BG_avg = BG_prime.mean()
+    BG_std = BG_prime.std()
+    print('BG:', BG_avg, BG_std)
 
     C = -50 * np.log10((FG_avg + FG_std) / (BG_avg - BG_std))
     k = -0.2 - 0.1 * np.floor(C / 10)
-    print('sauvola:', C, k)
-    local = sauvola(N, window_size=2 * SW + 1, k=k)
-    horiz = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 1))
-    vert = cv2.getStructuringElement(cv2.MORPH_RECT, (1, 5))
-    O_eroded = cv2.erode(cv2.erode(O, horiz), vert)
+    print('niblack:', C, k)
+    local = niblack(N, window_size=2 * SW + 1, k=k)
+    debug_imwrite('local.png', local)
+    local_CCs = algorithm.all_letters(local)
 
-    # TODO: implement CC-based algorithm
-    # take everything that's FG in O_eroded and niblack
-    return O_eroded | local
+    OP_inv = ~OP
+    CO_inv = np.zeros(im.shape, dtype=np.uint8)
+    for cc in local_CCs:
+        raster = bool_to_u8(cc.raster())
+        OP_inv_sliced = cc.slice(OP_inv)
+        if np.count_nonzero(raster & OP_inv_sliced) / float(cc.area()) >= C / 100:
+            CO_sliced = cc.slice(CO_inv)
+            CO_sliced |= raster
+
+    CO = ~CO_inv
+    debug_imwrite('CO.png', CO)
+
+    CO_inv_dilated = cv2.dilate(CO_inv, rect33)
+    FB = ~(CO_inv | ((~O) & CO_inv_dilated))
+    debug_imwrite('FB.png', FB)
+
+    return FB
 
 # @lib.timeit
 def niblack(im, window_size=61, k=0.2):
@@ -385,9 +466,9 @@ def go(argv):
     # lib.debug_imwrite('ng2014_hls.png', binarize(im, algorithm=ntirogiannis2014,
     #                                        gray=hls_gray))
     lib.debug_imwrite('yan.png', binarize(im, algorithm=yan))
-    lib.debug_imwrite('lu2010.png', binarize(im, algorithm=lu2010))
+    # lib.debug_imwrite('lu2010.png', binarize(im, algorithm=lu2010))
     lib.debug_imwrite('sauvola.png', binarize(im, algorithm=sauvola))
-    lib.debug_imwrite('sauvola_ng2014.png', binarize(im, algorithm=lambda im: sauvola(ng2014_normalize(im))))
+    # lib.debug_imwrite('sauvola_ng2014.png', binarize(im, algorithm=lambda im: sauvola(ng2014_normalize(im))))
     lib.debug_imwrite('retinex.png', binarize(im, algorithm=retinex))
 
 if __name__ == '__main__':

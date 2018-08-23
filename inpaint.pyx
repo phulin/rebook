@@ -41,7 +41,8 @@ def inpaint_ng14(np.ndarray[DTYPE_t, ndim=2] im,
                 I[y, x] = Pi[y - 1, x - 1]
                 M[y, x] = 1
 
-    cdef np.ndarray[DTYPE_t, ndim=2, mode="c"] P = Pi.copy()
+    cdef np.ndarray[DTYPE_t, ndim=2, mode="c"] Pmin = Pi.copy()
+    cdef np.ndarray[np.uint32_t, ndim=2, mode="c"] Psum = Pi.copy().astype(np.uint32)
 
     np.copyto(M, IM_padded)
     for y in range(im_h, 0, -1):
@@ -55,7 +56,8 @@ def inpaint_ng14(np.ndarray[DTYPE_t, ndim=2] im,
                                            M[y, x + 1] + M[y + 1, x])
                 I[y, x] = Pi[y - 1, x - 1]
                 M[y, x] = 1
-    np.minimum(P, Pi, out=P)
+    np.minimum(Pmin, Pi, out=Pmin)
+    Psum += Pi
 
     np.copyto(M, IM_padded)
     for y in range(1, im_h + 1):
@@ -69,7 +71,8 @@ def inpaint_ng14(np.ndarray[DTYPE_t, ndim=2] im,
                                            M[y, x + 1] + M[y + 1, x])
                 I[y, x] = Pi[y - 1, x - 1]
                 M[y, x] = 1
-    np.minimum(P, Pi, out=P)
+    np.minimum(Pmin, Pi, out=Pmin)
+    Psum += Pi
 
     np.copyto(M, IM_padded)
     for y in range(im_h, 0, -1):
@@ -83,6 +86,9 @@ def inpaint_ng14(np.ndarray[DTYPE_t, ndim=2] im,
                                            M[y, x + 1] + M[y + 1, x])
                 I[y, x] = Pi[y - 1, x - 1]
                 M[y, x] = 1
-    np.minimum(P, Pi, out=P)
+    np.minimum(Pmin, Pi, out=Pmin)
+    Psum += Pi
 
-    return P, I[1:im_h + 1, 1:im_w + 1]
+    cdef np.ndarray[DTYPE_t, ndim=2, mode="c"] Pavg = (Psum / 4).astype(np.uint8)
+
+    return Pmin, Pavg, I[1:im_h + 1, 1:im_w + 1]
