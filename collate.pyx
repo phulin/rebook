@@ -26,7 +26,7 @@ cdef class CLetter:
 
 def collate_lines(int AH, list letters):
     cdef int score, best_score, line_len
-    cdef CLetter last1, last2, cl, letter
+    cdef CLetter last1, last2, cl, letter, first, last
     cdef list lines, best_candidate
 
     letters = [CLetter(l) for l in letters]
@@ -53,7 +53,14 @@ def collate_lines(int AH, list letters):
                 best_candidate = line
 
         if best_candidate:
+            first = best_candidate[0]
+            last = best_candidate[-1]
             best_candidate.append(letter)
+            if letter.x - last.x > 300 or letter.x < first.x:
+                print "agggghhh"
+                print "first", first.letter()
+                print "last ", last.letter()
+                print "new  ", letter.letter()
             # print "  selected:", x, y, w, h
         else:
             lines.append([letter])

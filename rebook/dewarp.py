@@ -37,7 +37,7 @@ def arc_length_points(xs, ys, n_points):
     D = interpolate.interp1d(cumulative_arc, arc_points, assume_sorted=True)
 
     total_arc = cumulative_arc[-1]
-    print('total D arc length:', total_arc)
+    if lib.debug: print('total D arc length:', total_arc)
     s_domain = np.linspace(0, total_arc, n_points)
     return D(s_domain), total_arc
 
@@ -109,10 +109,10 @@ def merge_lines(AH, lines):
     #     trace_baseline(debug, l, BLUE)
     # lib.debug_imwrite('merged.png', debug)
 
-    print('original lines:', len(lines), 'merged lines:', len(out_lines))
+    if lib.debug: print('original lines:', len(lines), 'merged lines:', len(out_lines))
     return out_lines
 
-@lib.timeit
+# @lib.timeit
 def remove_outliers(im, AH, lines):
     debug = cv2.cvtColor(im, cv2.COLOR_GRAY2RGB)
 
@@ -139,14 +139,14 @@ def remove_outliers(im, AH, lines):
     lib.debug_imwrite('lines.png', debug)
     return merge_lines(AH, result)
 
-@lib.timeit
+# @lib.timeit
 def correct_geometry(orig, mesh, interpolation=cv2.INTER_LINEAR):
     # coordinates (u, v) on mesh -> mesh[u][v] = (x, y) in distorted image
     mesh32 = mesh.astype(np.float32)
     xmesh, ymesh = mesh32[:, :, 0], mesh32[:, :, 1]
     conv_xmesh, conv_ymesh = cv2.convertMaps(xmesh, ymesh, cv2.CV_16SC2)
     out = cv2.remap(orig, conv_xmesh, conv_ymesh, interpolation=interpolation,
-                    borderMode=cv2.BORDER_CONSTANT, borderValue=255)
+                    borderMode=cv2.BORDER_CONSTANT, borderValue=(255, 255, 255))
     lib.debug_imwrite('corrected.png', out)
 
     return out
@@ -154,16 +154,13 @@ def correct_geometry(orig, mesh, interpolation=cv2.INTER_LINEAR):
 def get_AH_lines(im):
     all_letters = algorithm.all_letters(im)
     AH = algorithm.dominant_char_height(im, letters=all_letters)
-    print('AH =', AH)
+    if lib.debug: print('AH =', AH)
     letters = algorithm.letter_contours(AH, im, letters=all_letters)
-    print('collating...')
-    all_lines = lib.timeit(collate.collate_lines)(AH, letters)
+    all_lines = collate.collate_lines(AH, letters)
     all_lines.sort(key=lambda l: l[0].y)
 
-    print('combining...')
     combined = algorithm.combine_underlined(AH, im, all_lines, all_letters)
 
-    print('removing stroke outliers...')
     filtered = algorithm.remove_stroke_outliers(bw, combined, k=2.0)
 
     lines = remove_outliers(im, AH, filtered)
@@ -287,7 +284,7 @@ class SplitPoly(object):
 def split_lengths(array, lengths):
     return np.split(array, np.cumsum(lengths))
 
-DEGREE = 7
+DEGREE = 13
 OMEGA = 1e-1
 def unpack_args(args, n_pages):
     # theta: 3; a_m: DEGREE; align: 2; l_m: len(lines)
@@ -783,7 +780,7 @@ def make_E_align_page(page, AH, O, n_pages, page_index, n_total_lines):
         [line[-1].right_mid() for line in page],
     ])
 
-    side_inliers = [ransac(coords, LinearXModel, 3, AH / 10.0)[1] for coords in side_points_2d]
+    side_inliers = [ransac(coords, LinearXModel, 3, AH / 5.0)[1] for coords in side_points_2d]
     inliers = np.logical_and(side_inliers[0], side_inliers[1])
 
     # axes after transpose: (coord 2, LR 2, line N)
@@ -831,7 +828,7 @@ def debug_print_points(filename, points, step=None, color=BLUE):
             draw_circle(debug, p, color=color)
         lib.debug_imwrite(filename, debug)
 
-@lib.timeit
+# @lib.timeit
 def make_mesh_2d(all_lines, O, R, g):
     all_letters = np.concatenate([line.letters for line in all_lines])
     corners_2d = np.concatenate([letter.corners() for letter in all_letters]).T
@@ -887,7 +884,7 @@ def make_mesh_2d(all_lines, O, R, g):
 
 def make_mesh_2d_indiv(all_lines, corners_XYZ, O, R, g):
     box_XYZ = Crop.from_points(corners_XYZ[:2]).expand(0.01)
-    print('box_XYZ:', box_XYZ)
+    if lib.debug: print('box_XYZ:', box_XYZ)
 
     # 70th percentile line width a good guess
     n_points_w = 1.2 * np.percentile(np.array([line.width() for line in all_lines]), 90)
@@ -904,7 +901,7 @@ def make_mesh_2d_indiv(all_lines, corners_XYZ, O, R, g):
     mesh_XYZ_y = np.linspace(box_XYZ.y0, box_XYZ.y1, n_points_h)
     mesh_XYZ = make_mesh_XYZ(mesh_XYZ_x_arc, mesh_XYZ_y, g)
     mesh_2d = gcs_to_image(mesh_XYZ, O, R)
-    print('mesh:', Crop.from_points(mesh_2d))
+    if lib.debug: print('mesh:', Crop.from_points(mesh_2d))
 
     # make sure meshes are not reversed
     if mesh_2d[0, :, 0].mean() > mesh_2d[0, :, -1].mean():
@@ -978,17 +975,19 @@ def initial_args(lines, O, AH, n_pages):
     mean_image_vanishing = np.mean(vanishing_points, axis=0)
     vanishing = np.concatenate([mean_image_vanishing - O, [-f]])
     vx, vy, _ = vanishing
-    print(' v:', vanishing)
+    if lib.debug: print(' v:', vanishing)
 
     xz_ratio = -f / vx  # theta_x / theta_z
     norm_theta_sq = (atan2(np.sqrt(vx ** 2 + f ** 2), vy) - pi) ** 2
     theta_z = np.sqrt(norm_theta_sq / (xz_ratio ** 2 + 1))
     theta_x = xz_ratio * theta_z
+    theta_x
 
-    theta_0 = np.array([theta_x, 0, theta_z])
-    print('theta_0:', theta_0)
-    print('theta_0 dot ey:', theta_0.dot(np.array([0, 1, 0])))
-    print('theta_0 dot v:', theta_0.dot(vanishing))
+    # theta_0 = np.array([theta_x, 0, theta_z])
+    # print('theta_0:', theta_0)
+    # print('theta_0 dot ey:', theta_0.dot(np.array([0, 1, 0])))
+    # print('theta_0 dot v:', theta_0.dot(vanishing))
+    theta_0 = np.array([0.1, 0, 0], dtype=np.float64)
 
     # flat surface as initial guess.
     # NB: coeff 0 forced to 0 here. not included in opt.
@@ -996,7 +995,7 @@ def initial_args(lines, O, AH, n_pages):
 
     R_0 = R_theta(theta_0)
     _, ROf_y, ROf_z = R_0.dot(Of)
-    print('Rv:', R_0.dot(np.array((vx, vy, -f))))
+    if lib.debug: print('Rv:', R_0.dot(np.array((vx, vy, -f))))
 
     # line points on focal plane
     base_points = [line_base_points(line, O) for line in lines]
@@ -1048,10 +1047,8 @@ def lsq(func, jac, x_scale):
 
     return result
 
-def kim2014(orig, split=True):
+def kim2014(orig, O=None, split=True):
     im = binarize.binarize(orig, algorithm=binarize.adaptive_otsu)
-    lib.debug_prefix = 'dewarp/'
-    lib.debug_imwrite('precrop.png', im)
     global bw
     bw = im
 
@@ -1059,7 +1056,8 @@ def kim2014(orig, split=True):
 
     AH, lines, _ = get_AH_lines(im)
 
-    O = np.array((im_w / 2.0, im_h / 2.0))
+    if O is None:
+        O = np.array((im_w / 2.0, im_h / 2.0))
 
     if split:
         # Test if line start distribution is bimodal.
@@ -1071,22 +1069,34 @@ def kim2014(orig, split=True):
             print('Bimodal! Splitting page!')
             pages = crop.split_lines(lines)
 
-            debug = cv2.cvtColor(bw, cv2.COLOR_GRAY2BGR)
-            for page in pages:
-                page_crop = Crop.from_lines(page).expand(0.002)
-                # print(page_crop)
-                page_crop.draw(debug)
-            lib.debug_imwrite('split.png', debug)
+            if lib.debug:
+                debug = cv2.cvtColor(bw, cv2.COLOR_GRAY2BGR)
+                for page in pages:
+                    page_crop = Crop.from_lines(page).expand(0.005)
+                    # print(page_crop)
+                    page_crop.draw(debug)
+                lib.debug_imwrite('split.png', debug)
 
-            for i, page in enumerate(pages):
-                page_image = Crop.from_lines(page).expand(0.002).apply(orig)
+            page_crops = [Crop.from_lines(page) for page in pages]
+            if len(page_crops) == 2:
+                [c0, c1] = page_crops
+                split_x = (c0.x1 + c1.x0) / 2
+                page_crops = [
+                    c0.union(Crop(0, 0, split_x, im_h)),
+                    c1.union(Crop(split_x, 0, im_w, im_h))
+                ]
+
+            result = []
+            for i, (page, page_crop) in enumerate(zip(pages, page_crops)):
+                page_image = page_crop.apply(orig)
+                new_O = O - np.array((page_crop.x0, page_crop.y0))
                 lib.debug_prefix = 'dewarp/'
                 lib.debug_imwrite('precrop{}.png'.format(i), im)
                 lib.debug_imwrite('page{}.png'.format(i), page_image)
                 lib.debug_prefix = 'dewarp{}/'.format(i)
-                yield kim2014(page_image, split=False).next()
+                result.append(kim2014(page_image, O=new_O, split=False)[0])
 
-            return
+            return result
     else:
         dual = False
 
@@ -1111,7 +1121,7 @@ def kim2014(orig, split=True):
 
     loss = DebugLoss(
         Preproject(E_str(base_points, n_pages, scale_t=False)
-                      + Regularize_T(base_points, n_pages) * 0.2,  # This just makes sure nothing crazy happens.
+                      + Regularize_T(base_points, n_pages) * 2.0,  # This just makes sure nothing crazy happens.
                       base_points, n_pages) \
         + make_E_align(pages, AH, O) * 0.2
     )
@@ -1122,7 +1132,7 @@ def kim2014(orig, split=True):
         x0=args_0,
         jac=loss.jac,
         # method='lm',
-        ftol=1e-4,
+        ftol=1e-5,
         # max_nfev=1,
         # x_scale='jac',
         x_scale=x_scale,
@@ -1146,14 +1156,15 @@ def kim2014(orig, split=True):
     theta, a_ms, align, T, l_m, g = unpack_args(result.x, n_pages)
     final_norm = norm(result.fun)
 
-    print('*** DONE ***')
+    print('*** OPTIMIZATION DONE ***')
     print('final norm:', final_norm)
-    print('theta:', theta)
-    for a_m in a_ms:
-        print('a_m:', np.concatenate([[0], a_m]))
-    if dual:
-        print('T:', g.T)
-    # print('l_m:', l_m)
+    if lib.debug:
+        print('theta:', theta)
+        for a_m in a_ms:
+            print('a_m:', np.concatenate([[0], a_m]))
+        if dual:
+            print('T:', g.T)
+        # print('l_m:', l_m)
 
     R = R_theta(theta)
 
@@ -1197,10 +1208,13 @@ def kim2014(orig, split=True):
     # IPython.embed()
 
     mesh_2ds = make_mesh_2d(lines, O, R, g)
+    result = []
     for mesh_2d in mesh_2ds:
         lib.debug_imwrite('orig.png', orig)
         first_pass = correct_geometry(orig, mesh_2d, interpolation=cv2.INTER_LANCZOS4)
-        yield first_pass
+        result.append(first_pass)
+
+    return result
 
 def go(argv):
     im = cv2.imread(argv[1], cv2.IMREAD_UNCHANGED)

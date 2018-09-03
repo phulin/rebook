@@ -7,10 +7,6 @@ import algorithm
 import collate
 import lib
 
-def draw_crop(im, crop, color, thickness=2):
-    if not lib.debug: return
-    cv2.rectangle(im, (crop.x0, crop.y0), (crop.x1, crop.y1), color, thickness)
-
 def split_lines(lines, all_lines=None):
     # Maximize horizontal separation
     # sorted by starting x value, ascending).
@@ -21,6 +17,10 @@ def split_lines(lines, all_lines=None):
     quantity = -100000
     argmax = -1
     for idx, line in enumerate(lines[2:-3], 2):
+        if line.right() - line.left() > 2000:
+            print('line:', line.crop())
+            for l in line:
+                print(l)
         current_r = max(current_r, line.right())
         x2 = lines[idx + 1].left()
         if lib.debug:
@@ -30,7 +30,7 @@ def split_lines(lines, all_lines=None):
             quantity = x2 - current_r
             argmax = idx
 
-    print('split:', argmax, 'out of', len(lines), '@', current_r)
+    if lib.debug: print('split:', argmax, 'out of', len(lines), '@', current_r)
 
     line_groups = [l for l in (lines[:argmax + 1], lines[argmax + 1:]) if l]
 
@@ -60,9 +60,9 @@ def filter_position(AH, im, lines, split):
     debug = cv2.cvtColor(im, cv2.COLOR_GRAY2RGB)
     for line in lines:
         if line.right() < line_start_thresh or line.left() > line_end_thresh:
-            draw_crop(debug, line.crop(), lib.RED)
+            line.crop().draw(debug, color=lib.RED)
         else:
-            draw_crop(debug, line.crop(), lib.GREEN)
+            line.crop().draw(debug, color=lib.GREEN)
             new_lines.append(line)
 
     lib.debug_imwrite("position_filter.png", debug)

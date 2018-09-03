@@ -21,8 +21,13 @@ import lib
 
 extension = '.tif'
 def process_image(original, dpi=None):
-    # original = cv2.resize(original, (0, 0), None, 1.5, 1.5)
-    im_h, im_w = original.shape[:2]
+    original_rot90 = original
+
+    for i in range(args.rotate / 90):
+        original_rot90 = np.rot90(original_rot90)
+
+    # original_rot90 = cv2.resize(original_rot90, (0, 0), None, 1.5, 1.5)
+    im_h, im_w = original_rot90.shape[:2]
     # image height should be about 10 inches. round to 100
     if not dpi:
         dpi = int(round(im_h / 1100.0) * 100)
@@ -32,26 +37,25 @@ def process_image(original, dpi=None):
 
     cropped_images = []
     if args.dewarp:
-        dewarped_images = dewarp.kim2014(original)
+        dewarped_images = dewarp.kim2014(original_rot90)
         for im in dewarped_images:
-            bw = binarize.binarize(im, algorithm=binarize.adaptive_otsu, resize=1.0)
+            bw = binarize.binarize(im, algorithm=binarize.sauvola, resize=1.0)
             _, [lines] = crop(im, bw, split=False)
             c = Crop.from_lines(lines)
             if c.nonempty():
                 cropped_images.append(c.apply(im))
-        cropped_images.extend(list(dewarped_images))
     else:
-        bw = binarize.binarize(original, algorithm=binarize.adaptive_otsu, resize=1.0)
+        bw = binarize.binarize(original_rot90, algorithm=binarize.adaptive_otsu, resize=1.0)
         debug_imwrite('thresholded.png', bw)
-        AH, line_sets = crop(original, bw, split=split)
+        AH, line_sets = crop(original_rot90, bw, split=split)
 
         for lines in line_sets:
             c = Crop.from_lines(lines)
             if c.nonempty():
                 lib.debug = False
                 bw_cropped = c.apply(bw)
-                orig_cropped = c.apply(original)
-                angle = algorithm.skew_angle(bw_cropped, original, AH, lines)
+                orig_cropped = c.apply(original_rot90)
+                angle = algorithm.skew_angle(bw_cropped, original_rot90, AH, lines)
                 if not np.isfinite(angle): angle = 0.
                 rotated = algorithm.safe_rotate(orig_cropped, angle)
 
@@ -67,16 +71,16 @@ def process_image(original, dpi=None):
                     cropped = new_crop.apply(rotated)
                     cropped_images.append(cropped)
 
-    outimgs = []
+    out_images = []
     for cropped in cropped_images:
-        if lib.is_bw(original):
-            outimgs.append(binarize.otsu(cropped))
+        if lib.is_bw(original_rot90):
+            out_images.append(binarize.otsu(cropped))
         else:
-            outimgs.append(
-                binarize.sauvola(binarize.grayscale(cropped))
+            out_images.append(
+                binarize.ntirogiannis2014(binarize.grayscale(cropped))
             )
 
-    return dpi, outimgs
+    return dpi, out_images
 
 def process_file(file_args):
     (inpath, outdir, dpi) = file_args
@@ -91,9 +95,9 @@ def process_file(file_args):
     else:
         print('processing', inpath)
 
-    original = cv2.imread(inpath, cv2.IMREAD_UNCHANGED)
-    dpi, outimgs = process_image(original, dpi=dpi)
-    for idx, outimg in enumerate(outimgs):
+    original = lib.imread(inpath)
+    dpi, out_images = process_image(original, dpi=dpi)
+    for idx, outimg in enumerate(out_images):
         outfile = '{}/{}_{}{}'.format(outdir, inpath[:-4], idx, extension)
         print('    writing', outfile)
         cv2.imwrite(outfile, outimg)
@@ -120,7 +124,7 @@ def accumulate_paths(target, accum):
         if os.path.isfile(path):
             if path.endswith('.pdf'):
                 accumulate_paths([pdfimages(path)], accum)
-            elif re.match(r'.*\.(png|jpg|tif)', path):
+            elif re.match(r'.*\.(png|jpg|tif|dng)', path):
                 accum.append(path)
         else:
             assert os.path.isdir(path)
@@ -130,9 +134,9 @@ def accumulate_paths(target, accum):
 def run(args):
     if args.single_file:
         lib.debug = True
-        im = cv2.imread(args.single_file, cv2.IMREAD_UNCHANGED)
-        _, outimgs = process_image(im, dpi=args.dpi)
-        for idx, outimg in enumerate(outimgs):
+        im = lib.imread(args.single_file)
+        _, out_images = process_image(im, dpi=args.dpi)
+        for idx, outimg in enumerate(out_images):
             cv2.imwrite('out{}.png'.format(idx), outimg)
         return
 
@@ -183,6 +187,8 @@ if __name__ == '__main__':
     parser.add_argument('-d', '--dpi', action='store', type=int,
                         help="Force a particular DPI")
     parser.add_argument('--dewarp', action='store_true', help="Dewarp pages.")
+    parser.add_argument('--rotate', action='store', type=int, choices=[0, 90, 180, 270],
+                        default=0, help="Rotate CCW by 90, 180, or 270 degrees.")
 
     global args
     args = parser.parse_args()

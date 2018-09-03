@@ -2,6 +2,7 @@ from __future__ import division, print_function
 
 import cv2
 import numpy as np
+import rawpy
 import time
 
 BLUE = (255, 0, 0)
@@ -13,6 +14,15 @@ debug_prefix = ''
 def debug_imwrite(path, im):
     if debug:
         cv2.imwrite(debug_prefix + path, im)
+
+def imread(path):
+    if path.endswith('.dng'):
+        with rawpy.imread(path) as raw:
+            result = raw.postprocess()
+    else:
+        result = cv2.imread(path, cv2.IMREAD_UNCHANGED)
+
+    return result
 
 def normalize_u8(im):
     im_max = im.max()

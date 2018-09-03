@@ -115,7 +115,7 @@ class HeightMap(object):
         idx2 = self.start_indices[height + 1]
         return self.letters[idx1:idx2]
 
-@lib.timeit
+# @lib.timeit
 def ntirogiannis2014(im):
     im_h, _ = im.shape
     N, BG_prime = ng2014_normalize(im)
@@ -127,14 +127,14 @@ def ntirogiannis2014(im):
 
     ratio_sum = 0
     for h in range(1, height_map.max_height() + 1):
+        if len(height_map[h]) == 0: continue
         ratio_sum += height_map.ratio_pixels(h) / height_map.ratio_components(h)
         if ratio_sum > 1:
             break
 
     min_height = h
 
-    print('Accept components only >= height', h)
-    print(letters[0].label_map)
+    if lib.debug: print('Accept components only >= height', h)
 
     OP = O.copy()
     for h in range(1, min_height):
@@ -146,41 +146,42 @@ def ntirogiannis2014(im):
     strokes = fast_stroke_width(OP)
     debug_imwrite('strokes.png', normalize_u8(strokes.clip(0, 10)))
     SW = int(round(strokes.sum() / np.count_nonzero(strokes)))
-    print('SW =', SW)
+    if lib.debug: print('SW =', SW)
 
     # FIXME: implement real skeletonization algorithm here.
     S = cv2.dilate(OP, cross33)
     debug_imwrite('fake_skeleton.png', S)
 
     S_inv = ~S
-    S_inv_32 = S_inv.astype(np.int32)
+    # S_inv_32 = S_inv.astype(np.int32)
 
-    FG_count = np.count_nonzero(S_inv)
+    # FG_count = np.count_nonzero(S_inv)
     FG_pos = im[S_inv.astype(bool)]
     FG_avg = FG_pos.mean()
     FG_std = FG_pos.std()
     # FG = (S_inv & im).astype(np.int32)
     # FG_avg = FG.sum() / float(FG_count)
     # FG_std = np.sqrt(((S_inv_32 & (FG - FG_avg)) ** 2).sum() / float(FG_count))
-    print('FG:', FG_avg, FG_std)
+    if lib.debug: print('FG:', FG_avg, FG_std)
 
     BG_avg = BG_prime.mean()
     BG_std = BG_prime.std()
-    print('BG:', BG_avg, BG_std)
+    if lib.debug: print('BG:', BG_avg, BG_std)
 
     C = -50 * np.log10((FG_avg + FG_std) / (BG_avg - BG_std))
-    k = -0.2 - 0.1 * np.floor(C / 10)
-    print('niblack:', C, k)
+    k = -0.0 - 0.05 * C / 10
+    if lib.debug: print('niblack:', C, k)
     local = niblack(N, window_size=2 * SW + 1, k=k)
     debug_imwrite('local.png', local)
     local_CCs = algorithm.all_letters(local)
 
-    OP_inv = ~OP
+    # NB: paper uses OP here, which results in neglecting all small components.
+    O_inv = ~O
     CO_inv = np.zeros(im.shape, dtype=np.uint8)
     for cc in local_CCs:
         raster = bool_to_u8(cc.raster())
-        OP_inv_sliced = cc.slice(OP_inv)
-        if np.count_nonzero(raster & OP_inv_sliced) / float(cc.area()) >= C / 100:
+        O_inv_sliced = cc.slice(O_inv)
+        if np.count_nonzero(raster & O_inv_sliced) / float(cc.area()) >= C / 100:
             CO_sliced = cc.slice(CO_inv)
             CO_sliced |= raster
 

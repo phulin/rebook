@@ -228,7 +228,7 @@ def koo2010(im_inv, AH):
 if __name__ == '__main__':
     lib.debug = True
     orig = cv2.imread(sys.argv[1])
-    bw = binarize.binarize(orig, algorithm=binarize.retinex)
+    bw = binarize.binarize(orig, algorithm=binarize.sauvola)
     lib.debug_imwrite('retinex.png', bw)
     AH = algorithm.dominant_char_height(bw)
     koo2010(bw, AH)
