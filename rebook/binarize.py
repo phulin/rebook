@@ -194,6 +194,15 @@ def ntirogiannis2014(im):
 
     return FB
 
+# Sometimes ng2014 returns bad results with tons of black pixels.
+# Fall back to sauvola in that case.
+def ng2014_fallback(im):
+    result = ntirogiannis2014(im)
+    if result.mean() > 160:
+        return result
+    else:
+        return sauvola(im)
+
 # @lib.timeit
 def niblack(im, window_size=61, k=0.2):
     means, stds = mean_std(im, window_size)

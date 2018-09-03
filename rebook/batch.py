@@ -77,7 +77,7 @@ def process_image(original, dpi=None):
             out_images.append(binarize.otsu(cropped))
         else:
             out_images.append(
-                binarize.ntirogiannis2014(binarize.grayscale(cropped))
+                binarize.ng2014_fallback(binarize.grayscale(cropped))
             )
 
     return dpi, out_images
