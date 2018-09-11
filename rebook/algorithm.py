@@ -106,7 +106,7 @@ def word_contours(AH, im):
 def valid_letter(AH, l):
     return l.h < 3 * AH and l.w < 5 * AH and l.h > AH / 2 and l.w > AH / 3
 
-def letter_contours(AH, im, letters=None):
+def filter_size(AH, im, letters=None):
     if letters is None:
         letters = all_letters(im)
 
@@ -114,7 +114,7 @@ def letter_contours(AH, im, letters=None):
         debug = cv2.cvtColor(im, cv2.COLOR_GRAY2BGR)
         for l in letters:
             l.box(debug, color=lib.GREEN if valid_letter(AH, l) else lib.RED)
-        lib.debug_imwrite('letters.png', debug)
+        lib.debug_imwrite('size_filter.png', debug)
 
     # Slightly tuned from paper (h < 3 * AH and h < AH / 4)
     return [l for l in letters if valid_letter(AH, l)]
@@ -443,5 +443,22 @@ def remove_stroke_outliers(im, lines, k=1.0):
             new_lines.append(TextLine(good_letters, underlines=line.underlines))
 
     lib.debug_imwrite("stroke_filter.png", debug)
+
+    return new_lines
+
+def filter_width_deviation(im, lines):
+    new_lines = []
+
+    debug = cv2.cvtColor(im, cv2.COLOR_GRAY2RGB)
+    for line in lines:
+        widths = np.array([l.w for l in line])
+        # print("{: 2.3f} / {: 2.3f} = {:2.3f}".format(widths.std(), widths.mean(), widths.std() / widths.mean()))
+        if widths.std() / widths.mean() > 0.65:
+            line.crop().draw(debug, color=lib.RED)
+        else:
+            line.crop().draw(debug, color=lib.GREEN)
+            new_lines.append(line)
+
+    lib.debug_imwrite("width_filter.png", debug)
 
     return new_lines

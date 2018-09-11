@@ -57,12 +57,12 @@ def teager(im):
         - padded[1:-1, 2:] * padded[1:-1, :-2])
 
 def ng2014_normalize(im):
-    IM = cv2.erode(niblack(im, window_size=61, k=-0.2), rect55)
-    IM = cv2.erode(IM, rect33)
+    IM = niblack(im, window_size=61, k=-0.2)
     debug_imwrite('niblack.png', IM)
+    IM = cv2.erode(IM, rect33)
+    debug_imwrite('dilated.png', IM)
 
     inpainted_min, inpainted_avg, modified = inpaint.inpaint_ng14(im, -IM)
-    # TODO: get inpainted with avg as well
     debug_imwrite('inpainted_min.png', inpainted_min)
     debug_imwrite('inpainted_avg.png', inpainted_avg)
 
@@ -115,8 +115,52 @@ class HeightMap(object):
         idx2 = self.start_indices[height + 1]
         return self.letters[idx1:idx2]
 
+def skeleton(im):
+    im_inv = ~im
+    eroded = im_inv.copy()
+    skel = np.zeros(im.shape, dtype=im.dtype)
+    while eroded.max() == im_inv.max():  # presumably 255
+        skel |= eroded & ~cv2.morphologyEx(eroded, cv2.MORPH_OPEN, cross33)
+        eroded = cv2.erode(eroded, cross33)
+
+    return ~skel
+
+def gradient(im):
+    im_inv = ~im
+    closed = cv2.morphologyEx(im_inv, cv2.MORPH_CLOSE, rect33)
+    opened = cv2.morphologyEx(im_inv, cv2.MORPH_OPEN, rect33)
+    assert (closed >= opened).all()
+    return closed - opened
+
+def erode_square(im, size):
+    horiz = cv2.getStructuringElement(cv2.MORPH_RECT, (1, size))
+    vert = cv2.getStructuringElement(cv2.MORPH_RECT, (size, 1))
+
+    return cv2.erode(cv2.erode(im, horiz), vert)
+
+def dilate_square(im, size):
+    horiz = cv2.getStructuringElement(cv2.MORPH_RECT, (1, size))
+    vert = cv2.getStructuringElement(cv2.MORPH_RECT, (size, 1))
+
+    return cv2.dilate(cv2.dilate(im, horiz), vert)
+
+def gradient2(im):
+    im_inv = ~im
+    mins = erode_square(im_inv, 15)
+    maxes = dilate_square(im_inv, 15)
+
+    diff = maxes - mins
+
+    return bool_to_u8(diff < 70)
+
+def sauvola_noisy(im, *args, **kwargs):
+    return sauvola(im, *args, **kwargs) | gradient2(im)
+
 # @lib.timeit
 def ntirogiannis2014(im):
+    lib.debug_prefix.append('ng2014')
+
+    debug_imwrite('input.png', im)
     im_h, _ = im.shape
     N, BG_prime = ng2014_normalize(im)
     O = otsu(N)
@@ -148,9 +192,8 @@ def ntirogiannis2014(im):
     SW = int(round(strokes.sum() / np.count_nonzero(strokes)))
     if lib.debug: print('SW =', SW)
 
-    # FIXME: implement real skeletonization algorithm here.
-    S = cv2.dilate(OP, cross33)
-    debug_imwrite('fake_skeleton.png', S)
+    S = skeleton(OP)
+    debug_imwrite('S.png', S)
 
     S_inv = ~S
     # S_inv_32 = S_inv.astype(np.int32)
@@ -169,21 +212,21 @@ def ntirogiannis2014(im):
     if lib.debug: print('BG:', BG_avg, BG_std)
 
     C = -50 * np.log10((FG_avg + FG_std) / (BG_avg - BG_std))
-    k = -0.0 - 0.05 * C / 10
+    k = -0.2 - 0.1 * C / 10
     if lib.debug: print('niblack:', C, k)
-    local = niblack(N, window_size=2 * SW + 1, k=k)
+    local = niblack(N, window_size=(2 * SW) | 1, k=k)
     debug_imwrite('local.png', local)
     local_CCs = algorithm.all_letters(local)
 
     # NB: paper uses OP here, which results in neglecting all small components.
     O_inv = ~O
+    O_inv_32 = O_inv.astype(np.int8, copy=False).astype(np.int32).astype(np.uint32, copy=False)
+    label_map_O_inv = O_inv_32 & local_CCs[0].label_map
     CO_inv = np.zeros(im.shape, dtype=np.uint8)
     for cc in local_CCs:
-        raster = bool_to_u8(cc.raster())
-        O_inv_sliced = cc.slice(O_inv)
-        if np.count_nonzero(raster & O_inv_sliced) / float(cc.area()) >= C / 100:
+        if np.count_nonzero(cc.slice(label_map_O_inv) == cc.label) / float(cc.area()) >= C / 100:
             CO_sliced = cc.slice(CO_inv)
-            CO_sliced |= raster
+            np.place(CO_sliced, cc.raster(), 255)
 
     CO = ~CO_inv
     debug_imwrite('CO.png', CO)
@@ -191,6 +234,8 @@ def ntirogiannis2014(im):
     CO_inv_dilated = cv2.dilate(CO_inv, rect33)
     FB = ~(CO_inv | ((~O) & CO_inv_dilated))
     debug_imwrite('FB.png', FB)
+
+    lib.debug_prefix.pop()
 
     return FB
 
@@ -469,17 +514,16 @@ def binarize(im, algorithm=adaptive_otsu, gray=CIELab_gray, resize=1.0):
         return algorithm(grayscale(im, algorithm=gray))
 
 def go(argv):
-    im = cv2.imread(argv[1], cv2.IMREAD_UNCHANGED)
+    im = grayscale(lib.imread(argv[1]))
     lib.debug = True
-    lib.debug_prefix = 'binarize/'
-    lib.debug_imwrite('ng2014.png', binarize(im, algorithm=ntirogiannis2014))
-    # lib.debug_imwrite('ng2014_hls.png', binarize(im, algorithm=ntirogiannis2014,
-    #                                        gray=hls_gray))
-    lib.debug_imwrite('yan.png', binarize(im, algorithm=yan))
-    # lib.debug_imwrite('lu2010.png', binarize(im, algorithm=lu2010))
-    lib.debug_imwrite('sauvola.png', binarize(im, algorithm=sauvola))
-    # lib.debug_imwrite('sauvola_ng2014.png', binarize(im, algorithm=lambda im: sauvola(ng2014_normalize(im))))
-    lib.debug_imwrite('retinex.png', binarize(im, algorithm=retinex))
+    lib.debug_prefix = ['binarize']
+    # lib.debug_imwrite('gradient2.png', gradient2(im))
+    lib.debug_imwrite('sauvola_noisy.png', sauvola_noisy(im, k=0.1))
+    # lib.debug_imwrite('adaptive_otsu.png', binarize(im, algorithm=adaptive_otsu))
+    # lib.debug_imwrite('ng2014.png', binarize(im, algorithm=ntirogiannis2014))
+    # lib.debug_imwrite('yan.png', binarize(im, algorithm=yan))
+    lib.debug_imwrite('sauvola.png', sauvola(im, k=0.1))
+    # lib.debug_imwrite('retinex.png', binarize(im, algorithm=retinex))
 
 if __name__ == '__main__':
     go(sys.argv)

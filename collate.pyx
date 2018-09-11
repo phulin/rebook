@@ -48,7 +48,7 @@ def collate_lines(int AH, list letters):
                     and letter.x < last2.x + last2.w + AH \
                     and last2.y <= letter.b and letter.y <= last2.b:
                 score = letter.x - last2.r + abs(letter.y - last2.y)
-            if score < best_score:
+            if score < best_score - 0.1:
                 best_score = score
                 best_candidate = line
 
@@ -56,7 +56,7 @@ def collate_lines(int AH, list letters):
             first = best_candidate[0]
             last = best_candidate[-1]
             best_candidate.append(letter)
-            if letter.x - last.x > 300 or letter.x < first.x:
+            if letter.x - last.x > 300 or letter.x < first.x or letter.x - first.x > 2000:
                 print "agggghhh"
                 print "first", first.letter()
                 print "last ", last.letter()

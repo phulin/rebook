@@ -238,6 +238,25 @@ class Crop(object):
     def from_rect(x, y, w, h):
         return Crop(x, y, x + w, y + h)
 
+    @staticmethod
+    def from_whitespace(im):
+        assert im.min() < im.max()
+        immax = im == im.max()
+
+        def first_nonmax_row(a):
+            return a.min(axis=1).argmin()
+
+        x0 = first_nonmax_row(immax.T)
+        y0 = first_nonmax_row(immax)
+        x1 = immax.shape[1] - first_nonmax_row(immax.T[::-1])
+        y1 = immax.shape[0] - first_nonmax_row(immax[::-1])
+
+        return Crop(x0, y0, x1, y1)
+
+    @staticmethod
+    def remove_whitespace(im):
+        return Crop.from_whitespace(im).apply(im)
+
     def expand(self, factor):
         return Crop(
             int(round(self.x0 - self.w * factor)),

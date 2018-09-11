@@ -2,6 +2,8 @@ from __future__ import division, print_function
 
 import cv2
 import numpy as np
+import os
+import os.path
 import rawpy
 import time
 
@@ -10,10 +12,18 @@ GREEN = (0, 255, 0)
 RED = (0, 0, 255)
 
 debug = False
-debug_prefix = ''
-def debug_imwrite(path, im):
-    if debug:
-        cv2.imwrite(debug_prefix + path, im)
+debug_prefix = []
+def debug_imwrite(filename, im):
+    if not debug: return False
+
+    if debug_prefix:
+        directory = os.path.join(*debug_prefix)
+        if not os.path.isdir(directory):
+            os.makedirs(directory)
+    else:
+        directory = '.'
+
+    return cv2.imwrite(os.path.join(directory, filename), im)
 
 def imread(path):
     if path.endswith('.dng'):

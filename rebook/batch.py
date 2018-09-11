@@ -37,13 +37,15 @@ def process_image(original, dpi=None):
 
     cropped_images = []
     if args.dewarp:
+        lib.debug_prefix.append('dewarp')
         dewarped_images = dewarp.kim2014(original_rot90)
         for im in dewarped_images:
             bw = binarize.binarize(im, algorithm=binarize.sauvola, resize=1.0)
             _, [lines] = crop(im, bw, split=False)
             c = Crop.from_lines(lines)
             if c.nonempty():
-                cropped_images.append(c.apply(im))
+                cropped_images.append(Crop.from_whitespace(bw).apply(im))
+        lib.debug_prefix.pop()
     else:
         bw = binarize.binarize(original_rot90, algorithm=binarize.adaptive_otsu, resize=1.0)
         debug_imwrite('thresholded.png', bw)
@@ -72,13 +74,17 @@ def process_image(original, dpi=None):
                     cropped_images.append(cropped)
 
     out_images = []
-    for cropped in cropped_images:
+    lib.debug_prefix.append('binarize')
+    for i, cropped in enumerate(cropped_images):
+        lib.debug_prefix.append('page{}'.format(i))
         if lib.is_bw(original_rot90):
             out_images.append(binarize.otsu(cropped))
         else:
             out_images.append(
                 binarize.ng2014_fallback(binarize.grayscale(cropped))
             )
+        lib.debug_prefix.pop()
+    lib.debug_prefix.pop()
 
     return dpi, out_images
 

@@ -78,10 +78,10 @@ class Letter(object):
         return Crop(self.x, self.y, self.x + self.w, self.y + self.h)
 
     def slice(self, im):
-        return self.crop().apply(im)
+        return im[self.y:self.y + self.h, self.x:self.x + self.w]
 
     def raster(self):
-        sliced = self.crop().apply(self.label_map)
+        sliced = self.slice(self.label_map)
         return sliced == self.label
 
     def top_contour(self):

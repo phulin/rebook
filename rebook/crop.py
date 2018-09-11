@@ -74,7 +74,7 @@ def crop(im, bw, split=True):
 
     all_letters = algorithm.all_letters(bw)
     AH = algorithm.dominant_char_height(bw, letters=all_letters)
-    letters = algorithm.letter_contours(AH, bw, letters=all_letters)
+    letters = algorithm.filter_size(AH, bw, letters=all_letters)
     all_lines = collate.collate_lines(AH, letters)
     combined = algorithm.combine_underlined(AH, bw, all_lines, all_letters)
     lines = algorithm.remove_stroke_outliers(bw, combined)
