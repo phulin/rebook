@@ -151,8 +151,14 @@ class TextLine(object):
     def left(self):
         return self.original_letters[0].left()
 
+    def left_mid(self):
+        return self.original_letters[0].left_mid()
+
     def right(self):
         return self.original_letters[-1].right()
+
+    def right_mid(self):
+        return self.original_letters[-1].right_mid()
 
     def width(self):
         return self.right() - self.left()

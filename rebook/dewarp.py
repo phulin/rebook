@@ -338,6 +338,13 @@ class Loss(object):
     def gradient(self, x, *args):
         return self.jac(x, *args).dot(self.residuals(x, *args))
 
+class NullLoss(Loss):
+    def residuals(self, x, *args):
+        return np.zeros((0,))
+
+    def jac(self, x, *args):
+        return np.zeros((0, len(x)))
+
 class AddLoss(Loss):
     def __init__(self, a, b):
         self.a, self.b = a, b
@@ -679,73 +686,52 @@ def E_align_project(R, g, all_points, t0s_idx):
     return newton.t_i_k(R, g, all_points, E_align_t0s[t0s_idx])
 
 class E_align_page(Loss):
-    def __init__(self, side_points, left, right, n_pages, page_index, n_total_lines):
-        assert left or right
-        self.left, self.right = left, right
+    def __init__(self, side_points, side_index, n_pages, page_index, n_total_lines):
+        self.side_points = side_points
+        self.side_index = side_index
         self.n_pages = n_pages
         self.page_index = page_index
         self.n_total_lines = n_total_lines
 
-        # [coord, side, line]
-        self.side_points = side_points[:, self.side_slice(), :]
-        self.all_side_points = self.side_points.reshape(3, -1)
-
-    def side_slice(self):
-        if self.left and self.right:
-            return np.s_[:]
-        elif self.left:
-            return np.s_[:1]
-        else:
-            return np.s_[1:]
-
-    def n_align(self):
-        return int(self.left) + int(self.right)
+        self.project_index = page_index * 2 + side_index
 
     def E_align(self, theta, g, align):
         R = R_theta(theta)
 
-        _, (Xs, _, _) = E_align_project(R, g, self.all_side_points, 0)
-        Xs.shape = (self.n_align(), -1)  # [side, line]
-
-        return (Xs - align[self.side_slice()][:, newaxis]).flatten()
+        _, (Xs, _, _) = E_align_project(R, g, self.side_points, self.project_index)
+        return Xs - align
 
     def residuals(self, args):
         theta, _, align_all, T, _, g = unpack_args(args, self.n_pages)
-        return self.E_align(theta, g, align_all[self.page_index])
+        return self.E_align(theta, g, align_all[self.page_index, self.side_index])
 
     def dE_align_dam(self, theta, R, g, gp, all_ts, all_surface):
         R1, _, _ = R
 
-        dt = dti_dam(R, g, gp, self.all_side_points, all_ts, all_surface)
+        dt = dti_dam(R, g, gp, self.side_points, all_ts, all_surface)
 
-        return (R1.dot(self.all_side_points) * dt).T
+        return (R1.dot(self.side_points) * dt).T
 
     def dE_align_dtheta(self, theta, R, dR, g, gp, all_ts, all_surface):
         R1, _, _ = R
         dR1 = dR[:, 0]
         dR13 = dR[:, 0, 2]
 
-        dt = dti_dtheta(theta, R, dR, g, gp, self.all_side_points, all_ts, all_surface)
+        dt = dti_dtheta(theta, R, dR, g, gp, self.side_points, all_ts, all_surface)
 
-        term1 = dR1.dot(self.all_side_points) * all_ts
-        term2 = R1.dot(self.all_side_points) * dt
+        term1 = dR1.dot(self.side_points) * all_ts
+        term2 = R1.dot(self.side_points) * dt
         term3 = -dR13 * f
 
         return term1.T + term2.T + term3
 
     def dE_align_dalign(self):
         N_lines = self.side_points.shape[-1]
-        result = np.zeros((N_lines * self.n_align(), self.n_pages * 2),
+        result = np.zeros((N_lines, self.n_pages * 2),
                           dtype=np.float64)
 
-        block = []
-        if self.left:
-            block.append([-1, 0])
-        if self.right:
-            block.append([0, -1])
-
-        column = self.page_index * 2
-        result[:, column:column + 2] = np.repeat(block, N_lines, axis=0)
+        column = self.page_index * 2 + self.side_index
+        result[:, column:column + 1] = np.full((N_lines, 1), -1)
 
         return result
 
@@ -755,8 +741,8 @@ class E_align_page(Loss):
         Xs, _, _, = all_surface
         gp_val = gp(Xs)
 
-        num = R1.dot(self.all_side_points) * gp_val
-        denom = R1.dot(self.all_side_points) * gp_val - R3.dot(self.all_side_points)
+        num = R1.dot(self.side_points) * gp_val
+        denom = R1.dot(self.side_points) * gp_val - R3.dot(self.side_points)
         result = (num / denom)[:, newaxis]
 
         return np.zeros(result.shape, dtype=np.float64)
@@ -764,13 +750,14 @@ class E_align_page(Loss):
 
     def jac(self, args):
         theta, a_m, _, _, _, g = unpack_args(args, self.n_pages)
+
         R = R_theta(theta)
         dR = dR_dtheta(theta, R)
         gp = g.deriv()
 
-        N_residuals = self.all_side_points.shape[-1]
+        N_residuals = self.side_points.shape[-1]
 
-        all_ts, all_surface = E_align_project(R, g, self.all_side_points, 0)
+        all_ts, all_surface = E_align_project(R, g, self.side_points, self.project_index)
 
         return np.concatenate((
             self.dE_align_dtheta(theta, R, dR, g, gp, all_ts, all_surface),
@@ -780,44 +767,49 @@ class E_align_page(Loss):
             np.zeros((N_residuals, self.n_total_lines), dtype=np.float64)  # dl_k
         ), axis=1)
 
+INLIER_THRESHOLD = 0.5
 def make_E_align_page(page, AH, O, n_pages, page_index, n_total_lines):
     # line left-mid and right-mid points on focal plane.
     # (LR 2, line N, coord 2)
-    side_points_2d = np.array([
-        [line.original_letters[0].left_mid() for line in page],
-        [line.original_letters[-1].right_mid() for line in page],
-    ])
+    side_points_2d = [
+        np.array([line.left_mid() for line in page]),
+        np.array([line.right_mid() for line in page]),
+    ]
 
     side_inliers = [ransac(coords, LinearXModel, 3, AH / 5.0)[1] for coords in side_points_2d]
-    inliers = np.logical_and(side_inliers[0], side_inliers[1])
+    inlier_use = [inliers.mean() > INLIER_THRESHOLD for inliers in side_inliers]
 
-    debug = cv2.cvtColor(bw, cv2.COLOR_GRAY2BGR)
-    for line, inlier in zip(page, inliers):
-        line.crop().draw(debug, color=lib.GREEN if inlier else lib.RED)
-    lib.debug_imwrite('align_inliers.png', debug)
+    if lib.debug:
+        debug = cv2.cvtColor(bw, cv2.COLOR_GRAY2BGR)
+        for line, inlier in zip(page, side_inliers[0]):
+            draw_circle(debug, line.left_mid(), color=lib.GREEN if inlier else lib.RED)
+        for line, inlier in zip(page, side_inliers[1]):
+            draw_circle(debug, line.right_mid(), color=lib.GREEN if inlier else lib.RED)
+        lib.debug_imwrite('align_inliers.png', debug)
 
-    # axes after transpose: (coord 2, LR 2, line N)
-    side_points_2d_filtered = side_points_2d[:, inliers].transpose(2, 0, 1)
+    side_points_2d_filtered = [
+        points[inliers].T for points, inliers in zip(side_points_2d, side_inliers)
+    ]
 
-    # widths = abs(side_points_2d[0, 1] - side_points_2d[0, 0])
-    # side_points_2d = side_points_2d[:, :, widths >= 0.9 * np.median(widths)]
-    assert side_points_2d_filtered.shape[0:2] == (2, 2)
+    # axes (coord 3, line N)
+    side_points = [
+        image_to_focal_plane(points, O) for points in side_points_2d_filtered
+    ]
 
-    # axes (coord 3, LR 2, line N)
-    side_points = image_to_focal_plane(side_points_2d_filtered, O)
-    assert side_points.shape[0:2] == (3, 2)
-
-    return E_align_page(side_points, True, True, n_pages, page_index, n_total_lines)
+    return [
+        E_align_page(points, i, n_pages, page_index, n_total_lines)
+        for i, (points, use) in enumerate(zip(side_points, inlier_use)) if use
+    ]
 
 def make_E_align(pages, AH, O):
     n_pages = len(pages)
     n_total_lines = sum((len(page) for page in pages)) + \
         sum((sum((len(line.underlines) for line in page)) for page in pages))
-    losses = [
+    losses = sum([
         make_E_align_page(page, AH, O, n_pages, i, n_total_lines) \
         for i, page in enumerate(pages)
-    ]
-    return reduce(lambda a, b: a + b, losses)
+    ], [])
+    return sum(losses, NullLoss())
 
 def make_mesh_XYZ(xs, ys, g):
     return np.array([
