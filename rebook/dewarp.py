@@ -998,6 +998,7 @@ def lsq(func, jac, x_scale):
     return result
 
 def kim2014(orig, O=None, split=True, n_points_w=None):
+    lib.debug_imwrite('gray.png', binarize.grayscale(orig))
     im = binarize.binarize(orig, algorithm=lambda im: binarize.sauvola_noisy(im, k=0.1))
     global bw
     bw = im
@@ -1061,7 +1062,9 @@ def kim2014(orig, O=None, split=True, n_points_w=None):
 
         return result
     else:
+        lib.debug_prefix.append('page0')
         dewarper = Kim2014(orig, im, lines, [lines], O, AH, n_points_w)
+        lib.debug_prefix.pop()
         return dewarper.run_retry()
 
 class Kim2014(object):

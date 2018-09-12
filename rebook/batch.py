@@ -41,7 +41,9 @@ def process_image(original, dpi=None):
         dewarped_images = dewarp.kim2014(original_rot90)
         for im in dewarped_images:
             bw = binarize.binarize(im, algorithm=binarize.sauvola, resize=1.0)
+            lib.debug_prefix.append('crop')
             _, [lines] = crop(im, bw, split=False)
+            lib.debug_prefix.pop()
             c = Crop.from_lines(lines)
             if c.nonempty():
                 cropped_images.append(Crop.from_whitespace(bw).apply(im))

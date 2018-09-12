@@ -80,7 +80,10 @@ def mean_std(im, W):
     return means, stds
 
 def round_point(p):
-    return tuple(np.round(np.atleast_1d(p)).astype(int))
+    try:
+        return tuple(np.round(np.atleast_1d(p)).astype(int))
+    except:
+        return (0, 0)
 
 def draw_line(debug, p1, p2, color=GREEN, thickness=2):
     cv2.line(debug, round_point(p1), round_point(p2), color, thickness)
