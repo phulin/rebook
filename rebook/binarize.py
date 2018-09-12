@@ -243,7 +243,7 @@ def ntirogiannis2014(im):
 # Fall back to sauvola in that case.
 def ng2014_fallback(im):
     result = ntirogiannis2014(im)
-    if result.mean() > 160:
+    if result.mean() > 180:
         return result
     else:
         return sauvola(im)
