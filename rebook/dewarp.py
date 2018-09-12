@@ -90,6 +90,8 @@ def trace_baseline(im, line, color=BLUE):
         draw_line(im, p1, p2, color=color, thickness=1)
 
 def merge_lines(AH, lines):
+    if len(lines) == 0: return lines
+
     out_lines = [lines[0]]
 
     for line in lines[1:]:
@@ -1050,7 +1052,7 @@ def kim2014(orig, O=None, split=True, n_points_w=None):
 
         return result
     else:
-        dewarper = Kim2014(orig, im, lines, pages, O, AH, n_points_w)
+        dewarper = Kim2014(orig, im, lines, [lines], O, AH, n_points_w)
         return dewarper.run_retry()
 
 class Kim2014(object):
