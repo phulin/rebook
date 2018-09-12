@@ -9,7 +9,7 @@ import re
 from multiprocessing import cpu_count
 from multiprocessing.pool import Pool
 from os.path import join, isfile
-from subprocess import check_call
+from subprocess import check_call, check_output
 
 import algorithm
 import binarize
@@ -122,14 +122,26 @@ def pdfimages(pdf_filename):
         check_call(['pdfimages', '-png', pdf_filename, join(dirpath, 'page')])
     return dirpath
 
+def unzip(zip_filename):
+    assert zip_filename.endswith('.zip')
+    directory = os.path.dirname(zip_filename)
+    filenames = check_output(['zipinfo', '-1', zip_filename]).splitlines()
+    paths = [os.path.join(directory, f) for f in filenames]
+    if not any([os.path.isfile(f) for f in paths]):
+        check_call(['unzip', zip_filename])
+    return [f for f in paths if os.path.isfile(f)]
+
 def sorted_numeric(strings):
     return sorted(strings, key=lambda f: list(map(int, re.findall('[0-9]+', f))))
 
 def accumulate_paths(target, accum):
     for path in target:
+        assert os.path.exists(path)
         if os.path.isfile(path):
             if path.endswith('.pdf'):
                 accumulate_paths([pdfimages(path)], accum)
+            elif path.endswith('.zip'):
+                accumulate_paths(unzip(path), accum)
             elif re.match(r'.*\.(png|jpg|tif|dng)', path):
                 accum.append(path)
         else:
