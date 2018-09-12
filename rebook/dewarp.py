@@ -92,12 +92,17 @@ def trace_baseline(im, line, color=BLUE):
 def merge_lines(AH, lines):
     if len(lines) == 0: return lines
 
+    lines = sorted(lines, key=lambda l: l[0].y)
     out_lines = [lines[0]]
 
     for line in lines[1:]:
-        x_min, x_max = line[0].left(), line[-1].right()
-        integ = (out_lines[-1].model - line.model).integ()
-        if abs(integ(x_max) - integ(x_min)) / (x_max - x_min) < AH / 8.0:
+        last = out_lines[-1]
+        x_min = max(line.left(), last.left())
+        x_max = min(line.right(), last.right())
+        overlap = x_max - x_min
+        integ = (last.model - line.model).integ()
+        if (overlap > .8 * line.width() or overlap > .8 * last.width()) \
+                and abs(integ(x_max) - integ(x_min)) / overlap < AH / 8.0:
             out_lines[-1].merge(line)
             points = np.array([letter.base_point() for letter in out_lines[-1]])
             new_model, inliers = ransac(points, PolyModel5, 10, AH / 15.0)
@@ -111,7 +116,7 @@ def merge_lines(AH, lines):
     #     trace_baseline(debug, l, BLUE)
     # lib.debug_imwrite('merged.png', debug)
 
-    print('original lines:', len(lines), 'merged lines:', len(out_lines))
+    if lib.debug: print('original lines:', len(lines), 'merged lines:', len(out_lines))
     return out_lines
 
 # @lib.timeit
