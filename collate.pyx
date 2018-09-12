@@ -42,7 +42,7 @@ def collate_lines(int AH, list letters):
             last2 = line[-2] if line_len > 1 else last1
             score = best_score
             if letter.x < last1.r + 4 * AH \
-                    and last1.y <= letter.b and letter.y <= last1.b:
+                    and last1.y <= letter.b + 3 and letter.y <= last1.b + 3:
                 score = letter.x - last1.r + abs(letter.y - last1.y)
             elif line_len > 1 \
                     and letter.x < last2.x + last2.w + AH \
