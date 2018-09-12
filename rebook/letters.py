@@ -102,6 +102,7 @@ class Letter(object):
 class TextLine(object):
     def __init__(self, letters, model=None, underlines=None):
         self.letters = sorted(letters, key=lambda l: l.x)
+        self.original_letters = self.letters
         self.model = model
         self.model_line = None
         self._inliers = None
@@ -137,6 +138,7 @@ class TextLine(object):
     def merge(self, other):
         self.letters += other.letters
         self.letters.sort(key=lambda l: l.x)
+        self.original_letters = self.letters
         self.underlines = list(set(self.underlines) | set(other.underlines))
         self.model = None
         self._inliers = None
@@ -147,10 +149,10 @@ class TextLine(object):
         return self.letters[0].base_point()[0], self.letters[-1].base_point()[0]
 
     def left(self):
-        return self.letters[0].left()
+        return self.original_letters[0].left()
 
     def right(self):
-        return self.letters[-1].right()
+        return self.original_letters[-1].right()
 
     def width(self):
         return self.right() - self.left()

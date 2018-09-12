@@ -53,8 +53,8 @@ class LinearXModel(object):
 def side_lines(AH, lines):
     im_h, _ = bw.shape
 
-    left_bounds = np.array([l[0].left_mid() for l in lines])
-    right_bounds = np.array([l[-1].right_mid() for l in lines])
+    left_bounds = np.array([l.original_letters[0].left_mid() for l in lines])
+    right_bounds = np.array([l.original_letters[-1].right_mid() for l in lines])
 
     vertical_lines = []
     debug = cv2.cvtColor(bw, cv2.COLOR_GRAY2BGR)
@@ -140,8 +140,8 @@ def remove_outliers(im, AH, lines):
         result.append(l)
 
     for l in result:
-        draw_circle(debug, l[0].left_mid(), 6, BLUE, -1)
-        draw_circle(debug, l[-1].right_mid(), 6, BLUE, -1)
+        draw_circle(debug, l.original_letters[0].left_mid(), 6, BLUE, -1)
+        draw_circle(debug, l.original_letters[-1].right_mid(), 6, BLUE, -1)
 
     lib.debug_imwrite('lines.png', debug)
     return merge_lines(AH, result)
@@ -784,12 +784,17 @@ def make_E_align_page(page, AH, O, n_pages, page_index, n_total_lines):
     # line left-mid and right-mid points on focal plane.
     # (LR 2, line N, coord 2)
     side_points_2d = np.array([
-        [line[0].left_mid() for line in page],
-        [line[-1].right_mid() for line in page],
+        [line.original_letters[0].left_mid() for line in page],
+        [line.original_letters[-1].right_mid() for line in page],
     ])
 
     side_inliers = [ransac(coords, LinearXModel, 3, AH / 5.0)[1] for coords in side_points_2d]
     inliers = np.logical_and(side_inliers[0], side_inliers[1])
+
+    debug = cv2.cvtColor(bw, cv2.COLOR_GRAY2BGR)
+    for line, inlier in zip(page, inliers):
+        line.crop().draw(debug, color=lib.GREEN if inlier else lib.RED)
+    lib.debug_imwrite('align_inliers.png', debug)
 
     # axes after transpose: (coord 2, LR 2, line N)
     side_points_2d_filtered = side_points_2d[:, inliers].transpose(2, 0, 1)
@@ -1047,6 +1052,7 @@ def kim2014(orig, O=None, split=True, n_points_w=None):
             lib.debug_imwrite('precrop.png', im)
             lib.debug_imwrite('page.png', page_image)
 
+            bw = page_bw
             dewarper = Kim2014(page_image, page_bw, page_lines, [page_lines],
                                new_O, page_AH, n_points_w)
             result.append(dewarper.run_retry()[0])
@@ -1206,7 +1212,7 @@ class Kim2014(object):
             Preproject(E_str(self.base_points, n_pages, scale_t=False)
                         + Regularize_T(self.base_points, n_pages) * 2.0,  # This just makes sure nothing crazy happens.
                         self.base_points, n_pages) \
-            + make_E_align(self.pages, self.AH, self.O) * 0.2
+            + make_E_align(self.pages, self.AH, self.O) * 0.6
         )
 
         # result = lm(

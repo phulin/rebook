@@ -104,7 +104,7 @@ def word_contours(AH, im):
     return word_boxes
 
 def valid_letter(AH, l):
-    return l.h < 3 * AH and l.w < 5 * AH and l.h > AH / 2 and l.w > AH / 3
+    return l.h < 6 * AH and l.w < 6 * AH and l.h > AH / 3 and l.w > AH / 4
 
 def filter_size(AH, im, letters=None):
     if letters is None:
@@ -453,7 +453,7 @@ def filter_spacing_deviation(im, AH, lines):
     for line in lines:
         spacings = np.array([l2.x - l1.right() for l1, l2 in zip(line, line[1:])])
         # print("spacing", spacings.std())
-        if spacings.std() > AH / 1.5:
+        if spacings.std() > AH / 1.0:
             line.crop().draw(debug, color=lib.RED)
         else:
             line.crop().draw(debug, color=lib.GREEN)
