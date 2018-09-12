@@ -151,7 +151,7 @@ def gradient2(im):
 
     diff = maxes - mins
 
-    return bool_to_u8(diff < 70)
+    return bool_to_u8(diff < 50)
 
 def sauvola_noisy(im, *args, **kwargs):
     return sauvola(im, *args, **kwargs) | gradient2(im)
