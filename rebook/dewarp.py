@@ -111,7 +111,7 @@ def merge_lines(AH, lines):
     #     trace_baseline(debug, l, BLUE)
     # lib.debug_imwrite('merged.png', debug)
 
-    if lib.debug: print('original lines:', len(lines), 'merged lines:', len(out_lines))
+    print('original lines:', len(lines), 'merged lines:', len(out_lines))
     return out_lines
 
 # @lib.timeit
@@ -1031,16 +1031,14 @@ def kim2014(orig, O=None, split=True, n_points_w=None):
             ]
 
         result = []
-        print('old O:', O)
         for i, (page, page_crop) in enumerate(zip(pages, page_crops)):
+            print('==== PAGE {} ===='.format(i))
             lib.debug_prefix.append('page{}'.format(i))
 
             page_image = page_crop.apply(orig)
             page_bw = page_crop.apply(im)
             page_AH, page_lines, _ = get_AH_lines(page_bw)
             new_O = O - np.array((page_crop.x0, page_crop.y0))
-            print(page_crop)
-            print('new O:', new_O)
             lib.debug_imwrite('precrop.png', im)
             lib.debug_imwrite('page.png', page_image)
 
