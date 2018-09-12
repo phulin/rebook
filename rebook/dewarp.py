@@ -1127,7 +1127,7 @@ class Kim2014(object):
         final_norm, opt_result = self.optimize()
         return self.correct(opt_result)
 
-    def run_retry(self, n_tries=4):
+    def run_retry(self, n_tries=6):
         best_result = None
         best_norm = np.inf
         for _ in range(n_tries):
@@ -1136,7 +1136,7 @@ class Kim2014(object):
                 best_norm = final_norm
                 best_result = opt_result
 
-            if final_norm < 120:
+            if final_norm < 100:
                 break
             else:
                 print("**** BAD RUN. ****")
