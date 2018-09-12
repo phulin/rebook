@@ -446,19 +446,19 @@ def remove_stroke_outliers(im, lines, k=1.0):
 
     return new_lines
 
-def filter_width_deviation(im, lines):
+def filter_spacing_deviation(im, AH, lines):
     new_lines = []
 
     debug = cv2.cvtColor(im, cv2.COLOR_GRAY2RGB)
     for line in lines:
-        widths = np.array([l.w for l in line])
-        # print("{: 2.3f} / {: 2.3f} = {:2.3f}".format(widths.std(), widths.mean(), widths.std() / widths.mean()))
-        if widths.std() / widths.mean() > 0.65:
+        spacings = np.array([l2.x - l1.right() for l1, l2 in zip(line, line[1:])])
+        # print("spacing", spacings.std())
+        if spacings.std() > AH / 1.5:
             line.crop().draw(debug, color=lib.RED)
         else:
             line.crop().draw(debug, color=lib.GREEN)
             new_lines.append(line)
 
-    lib.debug_imwrite("width_filter.png", debug)
+    lib.debug_imwrite("spacing_filter.png", debug)
 
     return new_lines

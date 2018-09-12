@@ -168,8 +168,8 @@ def get_AH_lines(im):
 
     combined = algorithm.combine_underlined(AH, im, all_lines, all_letters)
 
-    filtered = algorithm.remove_stroke_outliers(bw, combined, k=2.0)
-    filtered = algorithm.filter_width_deviation(bw, filtered)
+    filtered = algorithm.remove_stroke_outliers(im, combined, k=2.0)
+    filtered = algorithm.filter_spacing_deviation(im, AH, filtered)
 
     lines = remove_outliers(im, AH, filtered)
     # lines = combined
