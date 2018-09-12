@@ -1204,8 +1204,8 @@ class Kim2014(object):
         ])
 
         loss = DebugLoss(
-            Preproject(E_str(self.base_points, n_pages, scale_t=False)
-                        + Regularize_T(self.base_points, n_pages) * 2.0,  # This just makes sure nothing crazy happens.
+            Preproject(E_str(self.base_points, n_pages, scale_t=True),
+                        # + Regularize_T(self.base_points, n_pages) * 2.0,  # This just makes sure nothing crazy happens.
                         self.base_points, n_pages) \
             + make_E_align(self.pages, self.AH, self.O) * 0.6
         )
