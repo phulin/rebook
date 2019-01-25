@@ -169,7 +169,7 @@ def get_AH_lines(im):
     combined = algorithm.combine_underlined(AH, im, all_lines, all_letters)
 
     filtered = algorithm.remove_stroke_outliers(im, combined, k=2.0)
-    filtered = algorithm.filter_spacing_deviation(im, AH, filtered)
+    # filtered = algorithm.filter_spacing_deviation(im, AH, filtered)
 
     lines = remove_outliers(im, AH, filtered)
     # lines = combined
@@ -896,6 +896,7 @@ def make_mesh_2d_indiv(all_lines, corners_XYZ, O, R, g, n_points_w=None):
     if n_points_w is None:
         # 90th percentile line width a good guess
         n_points_w = 1.2 * np.percentile(np.array([line.width() for line in all_lines]), 90)
+        n_points_w = max(n_points_w, 1800)
     mesh_XYZ_x = np.linspace(box_XYZ.x0, box_XYZ.x1, 400)
     mesh_XYZ_z = g(mesh_XYZ_x)
     mesh_XYZ_xz_arc, total_arc = arc_length_points(mesh_XYZ_x, mesh_XYZ_z,
@@ -1015,6 +1016,7 @@ def kim2014(orig, O=None, split=True, n_points_w=None):
         pages = crop.split_lines(lines)
 
         n_points_w = 1.2 * np.percentile(np.array([line.width() for line in lines]), 90)
+        n_points_w = max(n_points_w, 1800)
 
         if lib.debug:
             debug = cv2.cvtColor(bw, cv2.COLOR_GRAY2BGR)
@@ -1142,7 +1144,7 @@ class Kim2014(object):
                 best_norm = final_norm
                 best_result = opt_result
 
-            if final_norm < 100:
+            if final_norm < 120:
                 break
             else:
                 print("**** BAD RUN. ****")
@@ -1247,7 +1249,6 @@ class Kim2014(object):
         mesh_2ds = make_mesh_2d(self.lines, self.O, R, g, n_points_w=self.n_points_w)
         result = []
         for mesh_2d in mesh_2ds:
-            lib.debug_imwrite('orig.png', self.orig)
             first_pass = correct_geometry(self.orig, mesh_2d, interpolation=cv2.INTER_LANCZOS4)
             result.append(first_pass)
 

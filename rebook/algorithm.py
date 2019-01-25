@@ -130,7 +130,7 @@ def horizontal_lines(AH, im, components=None):
             proj = mask.sum(axis=0)
             smooth = (proj[:-2] + proj[1:-1] + proj[2:]) / 3.0
             max_height_var = np.percentile(smooth, 98) - np.percentile(smooth, 2)
-            if smooth.max() <= AH / 4.0 and max_height_var <= AH / 6.0:
+            if np.percentile(smooth, 98) <= AH / 3.0 and max_height_var <= AH / 6.0:
                 result.append(component)
 
     return result
