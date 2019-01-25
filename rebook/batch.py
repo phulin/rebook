@@ -6,6 +6,8 @@ import glob
 import numpy as np
 import os
 import re
+import sys
+from fpdf import FPDF
 from multiprocessing import cpu_count
 from multiprocessing.pool import Pool
 from os.path import join, isfile
@@ -19,7 +21,7 @@ from geometry import Crop
 from lib import debug_imwrite
 import lib
 
-extension = '.tif'
+extension = '.png'
 def process_image(original, dpi=None):
     original_rot90 = original
 
@@ -95,10 +97,6 @@ def process_file(file_args):
     outfiles = glob.glob('{}/{}_*{}'.format(outdir, inpath[:-4], extension))
     if outfiles:
         print('skipping', inpath)
-        if dpi is not None:
-            for outfile in outfiles:
-                check_call(['tiffset', '-s', '282', str(dpi), outfile])
-                check_call(['tiffset', '-s', '283', str(dpi), outfile])
         return outfiles
     else:
         print('processing', inpath)
@@ -109,8 +107,6 @@ def process_file(file_args):
         outfile = '{}/{}_{}{}'.format(outdir, inpath[:-4], idx, extension)
         print('    writing', outfile)
         cv2.imwrite(outfile, outimg)
-        check_call(['tiffset', '-s', '282', str(dpi), outfile])
-        check_call(['tiffset', '-s', '283', str(dpi), outfile])
         outfiles.append(outfile)
 
     return outfiles
@@ -183,18 +179,25 @@ def run(args):
     outfiles = sum(outfiles, [])
     outfiles.sort(key=lambda f: list(map(int, re.findall('[0-9]+', f))))
 
-    outtif = join(args.outdir, 'out.tif')
-    outpdf = join(args.outdir, 'out.pdf')
-    if not isfile(outpdf):
-        if not isfile(outtif):
-            print('making tif:', outtif)
-            check_call(['tiffcp'] + outfiles + [outtif])
+    # outtif = join(args.outdir, 'out.tif')
+    outpdfpath = join(args.outdir, 'out.pdf')
+    if not isfile(outpdfpath):
+        print('making pdf:', outpdfpath)
+        pdf = FPDF(unit='in', format='Letter')
+        pdf.set_margins(0, 0, 0)
+        for outfile in outfiles:
+            print('.', end='')
+            sys.stdout.flush()
+            pdf.add_page()
+            im = cv2.imread(outfile)
+            inches_w = float(im.shape[1]) / args.dpi
+            inches_h = float(im.shape[0]) / args.dpi
+            x = (8.5 - inches_w) / 2
+            y = (11.0 - inches_h) / 2
+            pdf.image(outfile, w=inches_w, x=x, y=y)
+        print()
 
-        print('making pdf:', outpdf)
-        check_call([
-            'tiff2pdf', '-z', '-p', 'letter',
-            '-o', outpdf, outtif
-        ])
+        pdf.output(name=outpdfpath)
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Batch-process for PDF')
