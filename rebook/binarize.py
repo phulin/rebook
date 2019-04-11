@@ -199,7 +199,10 @@ def ntirogiannis2014(im):
     # S_inv_32 = S_inv.astype(np.int32)
 
     # FG_count = np.count_nonzero(S_inv)
+
     FG_pos = im[S_inv.astype(bool)]
+
+
     FG_avg = FG_pos.mean()
     FG_std = FG_pos.std()
     # FG = (S_inv & im).astype(np.int32)
@@ -211,8 +214,14 @@ def ntirogiannis2014(im):
     BG_std = BG_prime.std()
     if lib.debug: print('BG:', BG_avg, BG_std)
 
-    C = -50 * np.log10((FG_avg + FG_std) / (BG_avg - BG_std))
-    k = -0.2 - 0.1 * C / 10
+
+    if not (FG_avg + FG_std) == 0:
+        C = -50 * np.log10((FG_avg + FG_std) / (BG_avg - BG_std))
+        k = -0.2 - 0.1 * C / 10
+    else :#This is the extreme case when the FG is 100% black, check the article explaination page before equation 5
+        C = -50 * np.log10((2.5) / (BG_avg - BG_std))
+        k = -0.2 - 0.1 * C / 10
+
     if lib.debug: print('niblack:', C, k)
     local = niblack(N, window_size=(2 * SW) | 1, k=k)
     debug_imwrite('local.png', local)
@@ -455,7 +464,7 @@ def lu2010(im):
 
 def adaptive_otsu(im):
     im_h, _ = im.shape
-    s = (im_h / 200) | 1
+    s = (im_h // 200) | 1
     ellipse = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (s, s))
     background = cv2.morphologyEx(im, cv2.MORPH_DILATE, ellipse)
     bg_float = background.astype(np.float64)
@@ -475,10 +484,8 @@ def su2013(im, gamma=0.25):
     C = diff.astype(np.float32) / (I_max + I_min + 1e-16)
 
     alpha = (im.std() / 128.0) ** gamma
-    print('alpha:', alpha)
     C_a = alpha * C + (1 - alpha) * diff
-
-    _, C_a_bw = cv2.threshold(C_a, 0, 255, cv2.THRESH_BINARY | cv2.THRESH_OTSU)
+    _, C_a_bw = cv2.threshold(C_a.astype('uint8'), 0, 255, cv2.THRESH_BINARY | cv2.THRESH_OTSU)
 
     # TODO: finish
     return C_a_bw
