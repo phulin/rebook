@@ -199,10 +199,7 @@ def ntirogiannis2014(im):
     # S_inv_32 = S_inv.astype(np.int32)
 
     # FG_count = np.count_nonzero(S_inv)
-
     FG_pos = im[S_inv.astype(bool)]
-
-
     FG_avg = FG_pos.mean()
     FG_std = FG_pos.std()
     # FG = (S_inv & im).astype(np.int32)
@@ -214,11 +211,10 @@ def ntirogiannis2014(im):
     BG_std = BG_prime.std()
     if lib.debug: print('BG:', BG_avg, BG_std)
 
-
-    if not (FG_avg + FG_std) == 0:
+    if FG_avg + FG_std != 0:
         C = -50 * np.log10((FG_avg + FG_std) / (BG_avg - BG_std))
         k = -0.2 - 0.1 * C / 10
-    else :#This is the extreme case when the FG is 100% black, check the article explaination page before equation 5
+    else:  # This is the extreme case when the FG is 100% black, check the article explaination page before equation 5
         C = -50 * np.log10((2.5) / (BG_avg - BG_std))
         k = -0.2 - 0.1 * C / 10
 
