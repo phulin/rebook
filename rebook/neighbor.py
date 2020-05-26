@@ -3,11 +3,11 @@ from __future__ import print_function, division
 import argparse
 import cv2
 import freetype
+import joblib
 import numpy as np
 from numpy import dot
 import os
 import sklearn.decomposition
-from sklearn.externals import joblib
 
 import algorithm
 import binarize

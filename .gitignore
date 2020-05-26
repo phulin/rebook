@@ -9,3 +9,6 @@
 *.so
 .DS_Store
 *.pyc
+/.idea/
+/dewarp/
+/binarize/

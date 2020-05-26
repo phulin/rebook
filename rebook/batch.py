@@ -25,7 +25,7 @@ extension = '.png'
 def process_image(original, dpi=None):
     original_rot90 = original
 
-    for i in range(args.rotate / 90):
+    for i in range(args.rotate // 90):
         original_rot90 = np.rot90(original_rot90)
 
     # original_rot90 = cv2.resize(original_rot90, (0, 0), None, 1.5, 1.5)

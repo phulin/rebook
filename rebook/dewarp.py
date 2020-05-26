@@ -128,7 +128,8 @@ def remove_outliers(im, AH, lines):
         if len(l) < 5: continue
 
         points = np.array([letter.base_point() for letter in l])
-        model, inliers = ransac(points, PolyModel5, 10, AH / 10.0)
+        min_samples = points.shape[0]//2+1
+        model, inliers = ransac(data=points, model_class=PolyModel5, min_samples=min_samples, residual_threshold=AH / 10.0)
         poly = model.params
         l.model = poly
         # trace_baseline(debug, l, BLUE)
@@ -904,7 +905,7 @@ def make_mesh_2d_indiv(all_lines, corners_XYZ, O, R, g, n_points_w=None):
     mesh_XYZ_x_arc, _ = mesh_XYZ_xz_arc
 
     # TODO: think more about estimation of aspect ratio for mesh
-    n_points_h = n_points_w * box_XYZ.h / total_arc
+    n_points_h = int(n_points_w * box_XYZ.h / total_arc)
     # n_points_h = n_points_w * 1.7
 
     mesh_XYZ_y = np.linspace(box_XYZ.y0, box_XYZ.y1, n_points_h)
