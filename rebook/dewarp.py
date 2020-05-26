@@ -128,7 +128,8 @@ def remove_outliers(im, AH, lines):
         if len(l) < 5: continue
 
         points = np.array([letter.base_point() for letter in l])
-        model, inliers = ransac(data=points, model_class=PolyModel5, min_samples=4, residual_threshold=AH / 10.0)
+        min_samples = points.shape[0]//2+1
+        model, inliers = ransac(data=points, model_class=PolyModel5, min_samples=min_samples, residual_threshold=AH / 10.0)
         poly = model.params
         l.model = poly
         # trace_baseline(debug, l, BLUE)
