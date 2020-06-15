@@ -404,7 +404,7 @@ def remove_stroke_outliers(im, lines, k=1.0):
     for line in lines:
         for letter in line:
             sliced = letter.crop().apply(mask)
-            sliced += letter.raster()
+            sliced |= letter.raster()
 
     lib.debug_imwrite('letter_mask.png', -mask)
 
