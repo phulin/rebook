@@ -15,15 +15,15 @@ for e in modules:
 
 
 setup(
-    name="rebook",
+    name="dewarp",
     version="0.1.0",
-    packages=["rebook"],
-    package_dir={"rebook": "src/rebook"},
+    packages=["dewarp"],
+    package_dir={"dewarp": "src/dewarp"},
     author="Patrick Hulin",
     description="various book-scan-processing programs",
     long_description=long_description,
     long_description_content_type="text/markdown",
-    url="https://github.com/phulin/rebook",
+    url="https://github.com/pibit-ai/dewarp",
     ext_modules=modules,
     include_dirs=[np.get_include()],
     install_requires=[

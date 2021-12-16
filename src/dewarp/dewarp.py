@@ -15,8 +15,8 @@ from scipy.linalg import block_diag
 from skimage.measure import ransac
 
 from rebook import algorithm, binarize, collate, crop, lib, newton
-from rebook.geometry import Crop
-from rebook.lib import RED, GREEN, BLUE, draw_circle, draw_line
+from dewarp.geometry import Crop
+from dewarp.lib import RED, GREEN, BLUE, draw_circle, draw_line
 
 # focal length f = 3270.5 pixels
 f = 3270.5

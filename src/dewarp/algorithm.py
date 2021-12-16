@@ -4,9 +4,9 @@ import numpy as np
 from scipy import interpolate
 
 from rebook import lib
-from rebook.geometry import Line
-from rebook.lib import debug_imwrite, is_bw
-from rebook.letters import Letter, TextLine
+from dewarp.geometry import Line
+from dewarp.lib import debug_imwrite, is_bw
+from dewarp.letters import Letter, TextLine
 
 cross33 = cv2.getStructuringElement(cv2.MORPH_CROSS, (3, 3))
 

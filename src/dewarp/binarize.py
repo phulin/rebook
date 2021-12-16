@@ -7,8 +7,8 @@ import sys
 
 from rebook import algorithm, inpaint, lib
 
-from rebook.algorithm import fast_stroke_width
-from rebook.lib import mean_std, normalize_u8, clip_u8, bool_to_u8, debug_imwrite
+from dewarp.algorithm import fast_stroke_width
+from dewarp.lib import mean_std, normalize_u8, clip_u8, bool_to_u8, debug_imwrite
 
 cross33 = cv2.getStructuringElement(cv2.MORPH_CROSS, (3, 3))
 rect33 = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
