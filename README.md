@@ -5,7 +5,8 @@
 ```
 pip install https://github.com/pibit-ai/dewarp/archive/refs/heads/master.zip
 ```
-```
+
+```python
 from dewarp.dewarp import fix_dewarp
 import cv2
 
