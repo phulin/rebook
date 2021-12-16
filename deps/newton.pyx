@@ -18,7 +18,6 @@ cdef double poly_eval_verbose(np.ndarray[np.float64_t, ndim=1] coef, double x):
     cdef int k, m = coef.shape[0] - 1
     for k in range(m, -1, -1):
         y = fma(y, x, coef[k])  # y * x + a_k
-        print k, y, x, coef[k]
 
     return y
 
@@ -237,7 +236,4 @@ def t_i_k(np.ndarray[np.float64_t, ndim=2] R,
         t0s[i] = ts[i]
 
     # print 'final ts:', ts
-    if big_ys > 0:
-        print 'big ys:', big_ys, 'avg:', big_ys_sum / big_ys
-
     return ts, ts * rays - ROf[:, np.newaxis]

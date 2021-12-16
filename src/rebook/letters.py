@@ -6,7 +6,8 @@ import numpy as np
 from numpy.polynomial import Polynomial as Poly
 from skimage.measure import ransac
 
-from geometry import Crop, Line
+from rebook.geometry import Crop, Line
+
 
 class Letter(object):
     def __init__(self, label, label_map, stats, centroid):
@@ -16,16 +17,20 @@ class Letter(object):
         self.centroid = centroid
 
     @property
-    def x(self): return self.stats[cv2.CC_STAT_LEFT]
+    def x(self):
+        return self.stats[cv2.CC_STAT_LEFT]
 
     @property
-    def y(self): return self.stats[cv2.CC_STAT_TOP]
+    def y(self):
+        return self.stats[cv2.CC_STAT_TOP]
 
     @property
-    def w(self): return self.stats[cv2.CC_STAT_WIDTH]
+    def w(self):
+        return self.stats[cv2.CC_STAT_WIDTH]
 
     @property
-    def h(self): return self.stats[cv2.CC_STAT_HEIGHT]
+    def h(self):
+        return self.stats[cv2.CC_STAT_HEIGHT]
 
     def area(self):
         return self.stats[cv2.CC_STAT_AREA]
@@ -61,12 +66,14 @@ class Letter(object):
         return np.array((self.x + self.w, self.y + self.h))
 
     def corners(self):
-        return np.array((
-            (self.x, self.y),
-            (self.x, self.y + self.h),
-            (self.x + self.w, self.y),
-            (self.x + self.w, self.y + self.h)
-        ))
+        return np.array(
+            (
+                (self.x, self.y),
+                (self.x, self.y + self.h),
+                (self.x + self.w, self.y),
+                (self.x + self.w, self.y + self.h),
+            )
+        )
 
     def base_point(self):
         return np.array((self.x + self.w / 2.0, self.y + self.h))
@@ -78,7 +85,7 @@ class Letter(object):
         return Crop(self.x, self.y, self.x + self.w, self.y + self.h)
 
     def slice(self, im):
-        return im[self.y:self.y + self.h, self.x:self.x + self.w]
+        return im[self.y : self.y + self.h, self.x : self.x + self.w]
 
     def raster(self):
         sliced = self.slice(self.label_map)
@@ -91,13 +98,20 @@ class Letter(object):
         return self.y + self.h - 1 - self.raster()[::-1].argmax(axis=0)
 
     def box(self, im, color=(0, 0, 255), thickness=2):
-        cv2.rectangle(im, (self.x, self.y), (self.x + self.w, self.y + self.h),
-                      color=color, thickness=thickness)
+        cv2.rectangle(
+            im,
+            (self.x, self.y),
+            (self.x + self.w, self.y + self.h),
+            color=color,
+            thickness=thickness,
+        )
 
     def __str__(self):
-        return 'Letter[{}, {}, {}, {}]'.format(self.x, self.y, self.w, self.h)
+        return "Letter[{}, {}, {}, {}]".format(self.x, self.y, self.w, self.h)
 
-    def __repr__(self): return str(self)
+    def __repr__(self):
+        return str(self)
+
 
 class TextLine(object):
     def __init__(self, letters, model=None, underlines=None):
@@ -227,6 +241,7 @@ class TextLine(object):
         self.fit_line()
         return self._line_inliers
 
+
 class Underline(object):
     def __init__(self, label, label_map, stats):
         self.label = label
@@ -234,16 +249,20 @@ class Underline(object):
         self.stats = stats
 
     @property
-    def x(self): return self.stats[cv2.CC_STAT_LEFT]
+    def x(self):
+        return self.stats[cv2.CC_STAT_LEFT]
 
     @property
-    def y(self): return self.stats[cv2.CC_STAT_TOP]
+    def y(self):
+        return self.stats[cv2.CC_STAT_TOP]
 
     @property
-    def w(self): return self.stats[cv2.CC_STAT_WIDTH]
+    def w(self):
+        return self.stats[cv2.CC_STAT_WIDTH]
 
     @property
-    def h(self): return self.stats[cv2.CC_STAT_HEIGHT]
+    def h(self):
+        return self.stats[cv2.CC_STAT_HEIGHT]
 
     def crop(self):
         return Crop(self.x, self.y, self.x + self.w, self.y + self.h)

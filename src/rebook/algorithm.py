@@ -1,17 +1,15 @@
-from __future__ import division, print_function
-
 import cv2
 import math
 import numpy as np
 from scipy import interpolate
 
-import lib
-
-from geometry import Line
-from lib import debug_imwrite, is_bw
-from letters import Letter, TextLine
+from rebook import lib
+from rebook.geometry import Line
+from rebook.lib import debug_imwrite, is_bw
+from rebook.letters import Letter, TextLine
 
 cross33 = cv2.getStructuringElement(cv2.MORPH_CROSS, (3, 3))
+
 
 def skew_angle(im, orig, AH, lines):
     if len(orig.shape) == 2:
@@ -21,25 +19,27 @@ def skew_angle(im, orig, AH, lines):
 
     alphas = []
     for l in lines:
-        if len(l) < 10: continue
+        if len(l) < 10:
+            continue
 
         line_model = l.fit_line()
         line_model.draw(debug)
         alphas.append(line_model.angle())
 
-    debug_imwrite('lines.png', debug)
+    debug_imwrite("lines.png", debug)
 
     return np.median(alphas)
+
 
 def lu_dewarp(im):
     # morphological operators
     morph_a = [
-        np.array([1] + [0] * (2 * i), dtype=np.uint8).reshape(2 * i + 1, 1) \
+        np.array([1] + [0] * (2 * i), dtype=np.uint8).reshape(2 * i + 1, 1)
         for i in range(9)
     ]
     morph_d = [a.T for a in morph_a]
     morph_c = [
-        np.array([0] * (2 * i) + [1], dtype=np.uint8).reshape(2 * i + 1, 1) \
+        np.array([0] * (2 * i) + [1], dtype=np.uint8).reshape(2 * i + 1, 1)
         for i in range(9)
     ]
     # morph_b = [c.T for c in morph_c]
@@ -55,6 +55,7 @@ def lu_dewarp(im):
     for struct in morph_c + morph_d:
         bdyt &= im_inv ^ cv2.erode(im_inv, struct)
 
+
 def top_contours(contours, hierarchy):
     i = 0
     result = []
@@ -64,11 +65,16 @@ def top_contours(contours, hierarchy):
 
     return result
 
+
 def all_letters(im):
-    max_label, labels, stats, centroids = \
-        cv2.connectedComponentsWithStats(im ^ 255, connectivity=4)
-    return [Letter(label, labels, stats[label], centroids[label]) \
-            for label in range(1, max_label)]
+    max_label, labels, stats, centroids = cv2.connectedComponentsWithStats(
+        im ^ 255, connectivity=4
+    )
+    return [
+        Letter(label, labels, stats[label], centroids[label])
+        for label in range(1, max_label)
+    ]
+
 
 def dominant_char_height(im, letters=None):
     if letters is None:
@@ -84,27 +90,35 @@ def dominant_char_height(im, letters=None):
         debug = cv2.cvtColor(im, cv2.COLOR_GRAY2BGR)
         for letter in letters:
             letter.box(debug, color=lib.GREEN if letter.h == AH else lib.RED)
-        debug_imwrite('heights.png', debug)
+        debug_imwrite("heights.png", debug)
 
     return AH
+
 
 def word_contours(AH, im):
     opened = cv2.morphologyEx(im ^ 255, cv2.MORPH_OPEN, cross33)
     horiz = cv2.getStructuringElement(cv2.MORPH_RECT, (int(AH * 0.6) | 1, 1))
     rls = cv2.morphologyEx(opened, cv2.MORPH_CLOSE, horiz)
-    debug_imwrite('rls.png', rls)
+    debug_imwrite("rls.png", rls)
 
-    _, contours, [hierarchy] = cv2.findContours(rls, cv2.RETR_CCOMP,
-                                                cv2.CHAIN_APPROX_SIMPLE)
+    _, contours, [hierarchy] = cv2.findContours(
+        rls, cv2.RETR_CCOMP, cv2.CHAIN_APPROX_SIMPLE
+    )
     words = top_contours(contours, hierarchy)
     word_boxes = [tuple([word] + list(cv2.boundingRect(word))) for word in words]
     # Slightly tuned from paper (h < 3 * AH and h < AH / 4)
-    word_boxes = [__x_y_w_h for __x_y_w_h in word_boxes if __x_y_w_h[4] < 3 * AH and __x_y_w_h[4] > AH / 3 and __x_y_w_h[3] > AH / 3]
+    word_boxes = [
+        __x_y_w_h
+        for __x_y_w_h in word_boxes
+        if __x_y_w_h[4] < 3 * AH and __x_y_w_h[4] > AH / 3 and __x_y_w_h[3] > AH / 3
+    ]
 
     return word_boxes
 
+
 def valid_letter(AH, l):
     return l.h < 6 * AH and l.w < 6 * AH and l.h > AH / 3 and l.w > AH / 4
+
 
 def filter_size(AH, im, letters=None):
     if letters is None:
@@ -114,10 +128,11 @@ def filter_size(AH, im, letters=None):
         debug = cv2.cvtColor(im, cv2.COLOR_GRAY2BGR)
         for l in letters:
             l.box(debug, color=lib.GREEN if valid_letter(AH, l) else lib.RED)
-        lib.debug_imwrite('size_filter.png', debug)
+        lib.debug_imwrite("size_filter.png", debug)
 
     # Slightly tuned from paper (h < 3 * AH and h < AH / 4)
     return [l for l in letters if valid_letter(AH, l)]
+
 
 def horizontal_lines(AH, im, components=None):
     if components is None:
@@ -135,6 +150,7 @@ def horizontal_lines(AH, im, components=None):
 
     return result
 
+
 def combine_underlined(AH, im, lines, components):
     lines_set = set(lines)
     underlines = horizontal_lines(AH, im, components)
@@ -144,9 +160,12 @@ def combine_underlined(AH, im, lines, components):
         close_lines = []
         for line in lines:
             base_points = line.base_points().astype(int)
-            base_points = base_points[(base_points[:, 0] >= underline.x) \
-                                      & (base_points[:, 0] < underline.right())]
-            if len(base_points) == 0: continue
+            base_points = base_points[
+                (base_points[:, 0] >= underline.x)
+                & (base_points[:, 0] < underline.right())
+            ]
+            if len(base_points) == 0:
+                continue
 
             base_ys = base_points[:, 1]
             underline_ys = bottom[base_points[:, 0] - underline.x]
@@ -165,6 +184,7 @@ def combine_underlined(AH, im, lines, components):
             lines_set.add(combined)
 
     return list(lines_set)
+
 
 def collate_lines(AH, word_boxes):
     word_boxes = sorted(word_boxes, key=lambda c_x_y_w_h: c_x_y_w_h[1])
@@ -190,6 +210,7 @@ def collate_lines(AH, word_boxes):
             lines.append([word_box])
 
     return [TextLine(l) for l in lines]
+
 
 def collate_lines_2(AH, word_boxes):
     word_boxes = sorted(word_boxes, key=lambda c_x_y_w_h1: c_x_y_w_h1[1])
@@ -219,39 +240,51 @@ def collate_lines_2(AH, word_boxes):
 
     return [TextLine(l) for l in lines]
 
+
 def dewarp_text(im):
     # Goal-Oriented Rectification (Stamatopoulos et al. 2011)
     im_h, im_w = im.shape
 
     AH = dominant_char_height(im)
-    print('AH =', AH)
+    print("AH =", AH)
 
     word_boxes = word_contours(im)
     lines = collate_lines(AH, word_boxes)
 
-    word_coords = [np.array([(x, y, x + w, y + h) for c, x, y, w, h in l]) for l in lines]
-    bounds = np.array([
-        word_coords[np.argmin(word_coords[:, 0]), 0],
-        word_coords[np.argmin(word_coords[:, 2]), 2]
-    ])
-    line_coords = [(
-        min((x for _, x, y, w, h in l)),
-        min((y for _, x, y, w, h in l)),
-        max((x + w for _, x, y, w, h in l)),
-        max((y + h for _, x, y, w, h in l)),
-    ) for l in lines]
+    word_coords = [
+        np.array([(x, y, x + w, y + h) for c, x, y, w, h in l]) for l in lines
+    ]
+    bounds = np.array(
+        [
+            word_coords[np.argmin(word_coords[:, 0]), 0],
+            word_coords[np.argmin(word_coords[:, 2]), 2],
+        ]
+    )
+    line_coords = [
+        (
+            min((x for _, x, y, w, h in l)),
+            min((y for _, x, y, w, h in l)),
+            max((x + w for _, x, y, w, h in l)),
+            max((y + h for _, x, y, w, h in l)),
+        )
+        for l in lines
+    ]
 
     widths = np.array([x2_ - x1_ for x1_, y1_, x2_, y2_ in line_coords])
     median_width = np.median(widths)
 
-    line_coords = [x1_y1_x2_y2 for x1_y1_x2_y2 in line_coords if x1_y1_x2_y2[2] - x1_y1_x2_y2[0] > median_width * 0.8]
+    line_coords = [
+        x1_y1_x2_y2
+        for x1_y1_x2_y2 in line_coords
+        if x1_y1_x2_y2[2] - x1_y1_x2_y2[0] > median_width * 0.8
+    ]
 
     debug = cv2.cvtColor(im, cv2.COLOR_GRAY2BGR)
     for _, x, y, w, h in word_boxes:
         cv2.rectangle(debug, (x, y), (x + w, y + h), (0, 255, 0), 1)
     for x1, y1, x2, y2 in line_coords:
         cv2.rectangle(debug, (x1, y1), (x2, y2), (255, 0, 0), 2)
-    debug_imwrite('lines.png', debug)
+    debug_imwrite("lines.png", debug)
 
     left = np.array([(x, y) for _, x, y, _, _ in line_coords])
     right = np.array([(x, y) for _, _, _, x, y in line_coords])
@@ -273,7 +306,7 @@ def dewarp_text(im):
 
         cv2.line(debug, (0, c0), (im_w, c0 + c1 * im_w), (255, 0, 0), 3)
 
-    debug_imwrite('vertical.png', debug)
+    debug_imwrite("vertical.png", debug)
 
     good_lines = np.where(~bad_line_mask)
     AB = good_lines.min()
@@ -281,15 +314,16 @@ def dewarp_text(im):
 
     return AB, DC, bounds
 
+
 def safe_rotate(im, angle):
-    debug_imwrite('prerotated.png', im)
+    debug_imwrite("prerotated.png", im)
     im_h, im_w = im.shape[:2]
     if abs(angle) > math.pi / 4:
         print("warning: too much rotation")
         return im
 
     angle_deg = angle * 180 / math.pi
-    print('rotating to angle:', angle_deg, 'deg')
+    print("rotating to angle:", angle_deg, "deg")
 
     im_h_new = im_w * abs(math.sin(angle)) + im_h * math.cos(angle)
     im_w_new = im_h * abs(math.sin(angle)) + im_w * math.cos(angle)
@@ -298,14 +332,19 @@ def safe_rotate(im, angle):
     pad_w = int(math.ceil((im_w_new - im_w) / 2))
     pads = ((pad_h, pad_h), (pad_w, pad_w)) + ((0, 0),) * (len(im.shape) - 2)
 
-    padded = np.pad(im, pads, 'constant', constant_values=255)
+    padded = np.pad(im, pads, "constant", constant_values=255)
     padded_h, padded_w = padded.shape[:2]
     matrix = cv2.getRotationMatrix2D((padded_w / 2, padded_h / 2), angle_deg, 1)
-    result = cv2.warpAffine(padded, matrix, (padded_w, padded_h),
-                            borderMode=cv2.BORDER_CONSTANT,
-                            borderValue=255)
-    debug_imwrite('rotated.png', result)
+    result = cv2.warpAffine(
+        padded,
+        matrix,
+        (padded_w, padded_h),
+        borderMode=cv2.BORDER_CONSTANT,
+        borderValue=255,
+    )
+    debug_imwrite("rotated.png", result)
     return result
+
 
 def fast_stroke_width(im):
     # im should be black-on-white. max stroke width 41.
@@ -327,6 +366,7 @@ def fast_stroke_width(im):
 
     return dists
 
+
 # only after rotation!
 def fine_dewarp(im, lines):
     im_h, im_w = im.shape[:2]
@@ -335,7 +375,8 @@ def fine_dewarp(im, lines):
     points = []
     y_offsets = []
     for line in lines:
-        if len(line) < 10 or abs(line.fit_line().angle()) > 0.001: continue
+        if len(line) < 10 or abs(line.fit_line().angle()) > 0.001:
+            continue
         line.fit_line().draw(debug, thickness=1)
         base_points = np.array([letter.base_point() for letter in line.inliers()])
         median_y = np.median(base_points[:, 1])
@@ -344,9 +385,12 @@ def fine_dewarp(im, lines):
 
         for underline in line.underlines:
             mid_contour = (underline.top_contour() + underline.bottom_contour()) / 2
-            all_mid_points = np.stack([
-                underline.x + np.arange(underline.w), mid_contour,
-            ])
+            all_mid_points = np.stack(
+                [
+                    underline.x + np.arange(underline.w),
+                    mid_contour,
+                ]
+            )
             mid_points = all_mid_points[:, ::4]
             points.append(mid_points)
 
@@ -354,7 +398,7 @@ def fine_dewarp(im, lines):
             pt = tuple(np.round(p).astype(int))
             cv2.circle(debug, (pt[0], int(median_y)), 2, lib.RED, -1)
             cv2.circle(debug, pt, 2, lib.GREEN, -1)
-    cv2.imwrite('points.png', debug)
+    cv2.imwrite("points.png", debug)
 
     points = np.concatenate(points)
     y_offsets = np.concatenate(y_offsets)
@@ -366,25 +410,31 @@ def fine_dewarp(im, lines):
     # mesh[1] += y_offset_interp  # (mesh[0], mesh[1], grid=False)
 
     y_offset_interp = interpolate.SmoothBivariateSpline(
-        points[:, 0], points[:, 1], y_offsets.clip(-3, 3),
-        s=4 * points.shape[0]
+        points[:, 0], points[:, 1], y_offsets.clip(-3, 3), s=4 * points.shape[0]
     )
     ymesh -= y_offset_interp(xmesh, ymesh, grid=False).clip(-3, 3)
 
     conv_xmesh, conv_ymesh = cv2.convertMaps(xmesh, ymesh, cv2.CV_16SC2)
-    out = cv2.remap(im, conv_xmesh, conv_ymesh,
-                    interpolation=cv2.INTER_LINEAR,
-                    borderValue=np.median(im)).T
-    cv2.imwrite('corrected.png', out)
+    out = cv2.remap(
+        im,
+        conv_xmesh,
+        conv_ymesh,
+        interpolation=cv2.INTER_LINEAR,
+        borderValue=np.median(im),
+    ).T
+    cv2.imwrite("corrected.png", out)
 
     debug = cv2.cvtColor(out, cv2.COLOR_GRAY2BGR)
     for line in lines:
         base_points = np.array([letter.base_point() for letter in line.inliers()[1:-1]])
-        base_points[:, 1] -= y_offset_interp(base_points[:, 0], base_points[:, 1], grid=False)
+        base_points[:, 1] -= y_offset_interp(
+            base_points[:, 0], base_points[:, 1], grid=False
+        )
         Line.fit(base_points).draw(debug, thickness=1)
-    cv2.imwrite('corrected_line.png', debug)
+    cv2.imwrite("corrected_line.png", debug)
 
     return out
+
 
 def masked_mean_std(data, mask):
     mask_sum = np.count_nonzero(mask)
@@ -395,10 +445,11 @@ def masked_mean_std(data, mask):
     std = np.sqrt(np.square(data_dev).sum() / mask_sum)
     return mean, std
 
+
 def remove_stroke_outliers(im, lines, k=1.0):
     stroke_widths = fast_stroke_width(im)
     if lib.debug:
-        lib.debug_imwrite('strokes.png', lib.normalize_u8(stroke_widths.clip(0, 10)))
+        lib.debug_imwrite("strokes.png", lib.normalize_u8(stroke_widths.clip(0, 10)))
 
     mask = np.zeros(im.shape, dtype=np.uint8)
     for line in lines:
@@ -406,23 +457,25 @@ def remove_stroke_outliers(im, lines, k=1.0):
             sliced = letter.crop().apply(mask)
             sliced |= letter.raster()
 
-    lib.debug_imwrite('letter_mask.png', -mask)
+    lib.debug_imwrite("letter_mask.png", -mask)
 
     masked_strokes = stroke_widths.copy()
     masked_strokes &= -mask
 
     strokes_mean, strokes_std = masked_mean_std(masked_strokes, mask)
     if lib.debug:
-        print('overall: mean:', strokes_mean, 'std:', strokes_std)
+        print("overall: mean:", strokes_mean, "std:", strokes_std)
 
     debug = cv2.cvtColor(im, cv2.COLOR_GRAY2RGB)
     new_lines = []
     for line in lines:
-        if len(line) <= 1: continue
+        if len(line) <= 1:
+            continue
         good_letters = []
         for letter in line:
             crop = letter.crop()
-            if not crop.nonempty(): continue
+            if not crop.nonempty():
+                continue
 
             raster = letter.raster()
             sliced_strokes = crop.apply(stroke_widths).copy()
@@ -431,12 +484,18 @@ def remove_stroke_outliers(im, lines, k=1.0):
             mean, std = masked_mean_std(sliced_strokes, raster)
             if mean < strokes_mean - k * strokes_std:
                 if lib.debug:
-                    print('skipping {:4d} {:4d} {:.03f} {:.03f}'.format(
-                        letter.x, letter.y, mean, std,
-                    ))
+                    print(
+                        "skipping {:4d} {:4d} {:.03f} {:.03f}".format(
+                            letter.x,
+                            letter.y,
+                            mean,
+                            std,
+                        )
+                    )
                     letter.box(debug, color=lib.RED)
             else:
-                if lib.debug: letter.box(debug, color=lib.GREEN)
+                if lib.debug:
+                    letter.box(debug, color=lib.GREEN)
                 good_letters.append(letter)
 
         if good_letters:
@@ -445,6 +504,7 @@ def remove_stroke_outliers(im, lines, k=1.0):
     lib.debug_imwrite("stroke_filter.png", debug)
 
     return new_lines
+
 
 def filter_spacing_deviation(im, AH, lines):
     new_lines = []

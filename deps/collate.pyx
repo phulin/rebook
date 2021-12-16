@@ -56,12 +56,6 @@ def collate_lines(int AH, list letters):
             first = best_candidate[0]
             last = best_candidate[-1]
             best_candidate.append(letter)
-            if letter.x - last.x > 300 or letter.x < first.x or letter.x - first.x > 2000:
-                print "agggghhh"
-                print "first", first.letter()
-                print "last ", last.letter()
-                print "new  ", letter.letter()
-            # print "  selected:", x, y, w, h
         else:
             lines.append([letter])
 

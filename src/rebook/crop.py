@@ -3,9 +3,8 @@ from __future__ import division, print_function
 import cv2
 import numpy as np
 
-import algorithm
-import collate
-import lib
+from rebook import algorithm, collate, lib
+
 
 def split_lines(lines, all_lines=None):
     # Maximize horizontal separation
@@ -18,7 +17,7 @@ def split_lines(lines, all_lines=None):
     argmax = -1
     for idx, line in enumerate(lines[2:-3], 2):
         if line.right() - line.left() > 2000:
-            print('line:', line.crop())
+            print("line:", line.crop())
             for l in line:
                 print(l)
         current_r = max(current_r, line.right())
@@ -30,9 +29,10 @@ def split_lines(lines, all_lines=None):
             quantity = x2 - current_r
             argmax = idx
 
-    if lib.debug: print('split:', argmax, 'out of', len(lines), '@', current_r)
+    if lib.debug:
+        print("split:", argmax, "out of", len(lines), "@", current_r)
 
-    line_groups = [l for l in (lines[:argmax + 1], lines[argmax + 1:]) if l]
+    line_groups = [l for l in (lines[: argmax + 1], lines[argmax + 1 :]) if l]
 
     if all_lines is None:
         return line_groups
@@ -44,10 +44,11 @@ def split_lines(lines, all_lines=None):
             all_lines = sorted(all_lines, key=lambda line: line.left())
             lefts = [line.left() for line in all_lines]
             middle_idx = np.searchsorted(lefts, boundary)
-            print('boundary:', boundary)
-            print('left:', lefts[:middle_idx])
-            print('right:', lefts[middle_idx:])
+            print("boundary:", boundary)
+            print("left:", lefts[:middle_idx])
+            print("right:", lefts[middle_idx:])
             return line_groups, [all_lines[:middle_idx], all_lines[middle_idx:]]
+
 
 def filter_position(AH, im, lines, split):
     new_lines = []
@@ -69,6 +70,7 @@ def filter_position(AH, im, lines, split):
 
     return new_lines
 
+
 def crop(im, bw, split=True):
     im_h, im_w = im.shape[:2]
 
@@ -80,14 +82,14 @@ def crop(im, bw, split=True):
     lines = algorithm.remove_stroke_outliers(bw, combined)
 
     if not lines:
-        print('WARNING: no lines in image.')
+        print("WARNING: no lines in image.")
         return AH, []
 
     lines = filter_position(AH, bw, lines, split)
     lines = [line for line in lines if not np.all(line.crop().apply(bw) == 255)]
 
     if not lines:
-        print('WARNING: eliminated all lines.')
+        print("WARNING: eliminated all lines.")
         return AH, []
 
     if split and im_w > im_h:  # two pages
