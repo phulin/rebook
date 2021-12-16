@@ -1,4 +1,4 @@
-from letters import Letter, TextLine
+from dewarp.letters import Letter, TextLine
 
 import numpy as np
 cimport numpy as np

@@ -5,7 +5,8 @@ import numpy as np
 import numpy.polynomial.polynomial as poly
 import sys
 
-from dewarp import algorithm, inpaint, lib
+import inpaint
+from dewarp import algorithm, lib
 
 from dewarp.algorithm import fast_stroke_width
 from dewarp.lib import mean_std, normalize_u8, clip_u8, bool_to_u8, debug_imwrite

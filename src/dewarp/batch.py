@@ -13,13 +13,10 @@ from multiprocessing.pool import Pool
 from os.path import join, isfile
 from subprocess import check_call, check_output
 
-import algorithm
-import binarize
-import dewarp
-from crop import crop
-from geometry import Crop
-from lib import debug_imwrite
-import lib
+from dewarp import algorithm, binarize, dewarp, lib
+from dewarp.crop import crop
+from dewarp.geometry import Crop
+from dewarp.lib import debug_imwrite
 
 extension = '.png'
 def process_image(original, dpi=None):
@@ -40,7 +37,7 @@ def process_image(original, dpi=None):
     cropped_images = []
     if args.dewarp:
         lib.debug_prefix.append('dewarp')
-        dewarped_images = dewarp.kim2014(original_rot90)
+        dewarped_images = dewarp.fix_warp(original_rot90)
         for im in dewarped_images:
             bw = binarize.binarize(im, algorithm=binarize.sauvola, resize=1.0)
             lib.debug_prefix.append('crop')

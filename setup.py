@@ -6,13 +6,9 @@ with open("README.md", "r") as f:
     long_description = f.read()
 
 files = ["inpaint", "newton", "collate", "feature_sign"]
-
-extensions = [Extension(file_name, [f"./deps/{file_name}.pyx"]) for file_name in files]
-
-modules = cythonize(extensions, language_level="3")
+modules = cythonize([Extension(file_name, [f"./deps/{file_name}.pyx"]) for file_name in files], language_level="3")
 for e in modules:
     e.include_dirs.append(np.get_include())
-
 
 setup(
     name="dewarp",
