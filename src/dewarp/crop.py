@@ -3,7 +3,7 @@ from __future__ import division, print_function
 import cv2
 import numpy as np
 
-from rebook import algorithm, collate, lib
+from dewarp import algorithm, collate, lib
 
 
 def split_lines(lines, all_lines=None):

@@ -3,7 +3,7 @@ import math
 import numpy as np
 from scipy import interpolate
 
-from rebook import lib
+from dewarp import lib
 from dewarp.geometry import Line
 from dewarp.lib import debug_imwrite, is_bw
 from dewarp.letters import Letter, TextLine

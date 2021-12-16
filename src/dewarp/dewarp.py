@@ -14,7 +14,7 @@ from scipy import interpolate
 from scipy.linalg import block_diag
 from skimage.measure import ransac
 
-from rebook import algorithm, binarize, collate, crop, lib, newton
+from dewarp import algorithm, binarize, collate, crop, lib, newton
 from dewarp.geometry import Crop
 from dewarp.lib import RED, GREEN, BLUE, draw_circle, draw_line
 
