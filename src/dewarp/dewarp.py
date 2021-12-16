@@ -4,6 +4,7 @@ import cv2
 import itertools
 import numpy as np
 import sys
+import logging
 
 from math import atan2, pi
 from numpy import dot, newaxis
@@ -19,6 +20,8 @@ import newton
 import collate
 from dewarp.geometry import Crop
 from dewarp.lib import RED, GREEN, BLUE, draw_circle, draw_line
+
+logger = logging.getLogger(__name__)
 
 # focal length f = 3270.5 pixels
 f = 3270.5
@@ -37,7 +40,7 @@ def arc_length_points(xs, ys, n_points):
 
     total_arc = cumulative_arc[-1]
     if lib.debug:
-        print("total D arc length:", total_arc)
+        logger.debug("total D arc length:", total_arc)
     s_domain = np.linspace(0, total_arc, n_points)
     return D(s_domain), total_arc
 
@@ -127,7 +130,7 @@ def merge_lines(AH, lines):
     # lib.debug_imwrite('merged.png', debug)
 
     if lib.debug:
-        print("original lines:", len(lines), "merged lines:", len(out_lines))
+        logger.debug("original lines:", len(lines), "merged lines:", len(out_lines))
     return out_lines
 
 
@@ -193,7 +196,7 @@ def get_AH_lines(im):
     all_letters = algorithm.all_letters(im)
     AH = algorithm.dominant_char_height(im, letters=all_letters)
     if lib.debug:
-        print("AH =", AH)
+        logger.debug("AH =", AH)
     letters = algorithm.filter_size(AH, im, letters=all_letters)
     all_lines = collate.collate_lines(AH, letters)
     all_lines.sort(key=lambda l: l[0].y)
@@ -392,8 +395,8 @@ def E_str_project(R, g, base_points, t0s_idx):
             np.full((points.shape[1],), np.inf) for points in base_points
         ]
 
-    # print([point.shape for point in base_points])
-    # print([t0s.shape for t0s in E_str_t0s])
+    # logger.debug([point.shape for point in base_points])
+    # logger.debug([t0s.shape for t0s in E_str_t0s])
 
     return [
         newton.t_i_k(R, g, points, t0s)
@@ -452,7 +455,7 @@ class DebugLoss(Loss):
     def residuals(self, *args):
         result = self.inner.residuals(*args)
         if lib.debug:
-            print("norm: {:3.6f}".format(norm(result)))
+            logger.debug("norm: {:3.6f}".format(norm(result)))
         return result
 
     def jac(self, *args):
@@ -685,8 +688,8 @@ def dti_dam(R, g, gp, all_points, all_ts, all_surface):
             [(Xs - g.T) ** m * g.left.omega ** (m - 1) for m in range(1, DEGREE + 1)]
         )
         ratio = powers / denom
-        # print('on left:', np.count_nonzero(Xs <= g.T))
-        # print('on right:', np.count_nonzero(Xs > g.T))
+        # logger.debug('on left:', np.count_nonzero(Xs <= g.T))
+        # logger.debug('on right:', np.count_nonzero(Xs > g.T))
         left_block = np.where(Xs <= g.T, ratio, 0)
         right_block = np.where(Xs > g.T, ratio, 0)
         return np.concatenate([left_block, right_block])
@@ -745,8 +748,8 @@ def debug_jac(theta, R, g, l_m, base_points, line_ts_surface):
     all_ts = np.concatenate([ts for ts, _ in line_ts_surface])
     all_surface = np.concatenate([surface for _, surface in line_ts_surface], axis=1)
 
-    print("dE_str_dtheta")
-    print(dE_str_dtheta(theta, R, dR, g, gp, all_points, all_ts, all_surface).T)
+    logger.debug("dE_str_dtheta")
+    logger.debug(dE_str_dtheta(theta, R, dR, g, gp, all_points, all_ts, all_surface).T)
     for i in range(3):
         delta = np.zeros(3)
         inc = norm(theta) / 4096
@@ -754,15 +757,15 @@ def debug_jac(theta, R, g, l_m, base_points, line_ts_surface):
         diff = E_str(theta + delta, g, l_m, base_points) - E_str(
             theta - delta, g, l_m, base_points
         )
-        print(diff / (2 * inc))
+        logger.debug(diff / (2 * inc))
 
-    print()
+    logger.debug()
 
-    print("dE_str_dam")
+    logger.debug("dE_str_dam")
     analytical = dE_str_dam(R, g, g.deriv(), all_points, all_ts, all_surface).T
     gl = g.left
     gr = g.right
-    print("==== LEFT ====")
+    logger.debug("==== LEFT ====")
     for i in range(1, DEGREE + 1):
         delta = np.zeros(DEGREE + 1)
         inc = gl.coef[i] / 4096
@@ -782,12 +785,12 @@ def debug_jac(theta, R, g, l_m, base_points, line_ts_surface):
             abs(analytical[i - 1]) > 1e-7,
             abs(diff / (2 * inc)) > 1e-7,
         )
-        print("X  ", all_surface[0, nonzero])
-        print("ana", analytical[i - 1][nonzero])
-        print("dif", (diff / (2 * inc))[nonzero])
-        print()
+        logger.debug("X  ", all_surface[0, nonzero])
+        logger.debug("ana", analytical[i - 1][nonzero])
+        logger.debug("dif", (diff / (2 * inc))[nonzero])
+        logger.debug()
 
-    print("==== RIGHT ====")
+    logger.debug("==== RIGHT ====")
     for i in range(1, DEGREE + 1):
         delta = np.zeros(DEGREE + 1)
         inc = gr.coef[i] / 4096
@@ -807,19 +810,19 @@ def debug_jac(theta, R, g, l_m, base_points, line_ts_surface):
             abs(analytical[DEGREE + i - 1]) > 1e-7,
             abs(diff / (2 * inc)) > 1e-7,
         )
-        print("X  ", all_surface[0, nonzero])
-        print("ana", analytical[DEGREE + i - 1][nonzero])
-        print("dif", (diff / (2 * inc))[nonzero])
-        print()
+        logger.debug("X  ", all_surface[0, nonzero])
+        logger.debug("ana", analytical[DEGREE + i - 1][nonzero])
+        logger.debug("dif", (diff / (2 * inc))[nonzero])
+        logger.debug()
 
     if g.split():
-        print("dE_str_dT (T = {:.3f})".format(g.T))
-        print(dE_str_dT(R, g, gp, all_points, all_ts, all_surface).T)
+        logger.debug("dE_str_dT (T = {:.3f})".format(g.T))
+        logger.debug(dE_str_dT(R, g, gp, all_points, all_ts, all_surface).T)
         inc = 1e-2
         diff = E_str(
             theta, SplitPoly(g.T + inc, g.left, g.right), l_m, base_points
         ) - E_str(theta, SplitPoly(g.T - inc, g.left, g.right), l_m, base_points)
-        print(diff / (2 * inc))
+        logger.debug(diff / (2 * inc))
 
 
 E_align_t0s = []
@@ -1049,7 +1052,7 @@ def make_mesh_2d(all_lines, O, R, g, n_points_w=None):
             ax.set_aspect("equal")
             plt.savefig("dewarp/camera.png")
         except Exception as e:
-            print(e)
+            logger.debug(e)
             import IPython
 
             IPython.embed()
@@ -1088,7 +1091,7 @@ def make_mesh_2d(all_lines, O, R, g, n_points_w=None):
 def make_mesh_2d_indiv(all_lines, corners_XYZ, O, R, g, n_points_w=None):
     box_XYZ = Crop.from_points(corners_XYZ[:2]).expand(0.01)
     if lib.debug:
-        print("box_XYZ:", box_XYZ)
+        logger.debug("box_XYZ:", box_XYZ)
 
     if n_points_w is None:
         # 90th percentile line width a good guess
@@ -1111,7 +1114,7 @@ def make_mesh_2d_indiv(all_lines, corners_XYZ, O, R, g, n_points_w=None):
     mesh_XYZ = make_mesh_XYZ(mesh_XYZ_x_arc, mesh_XYZ_y, g)
     mesh_2d = gcs_to_image(mesh_XYZ, O, R)
     if lib.debug:
-        print("mesh:", Crop.from_points(mesh_2d))
+        logger.debug("mesh:", Crop.from_points(mesh_2d))
 
     # make sure meshes are not reversed
     if mesh_2d[0, :, 0].mean() > mesh_2d[0, :, -1].mean():
@@ -1160,12 +1163,12 @@ def lm(
 
         r_new = fun(x_new, *args, **kwargs)
         C_new = dot(r_new, r_new) / 2
-        print(
+        logger.debug(
             "trying step: size {:.3g}, C {:.3g}, lam {:.3g}".format(
                 norm(x - x_new), C_new, lam
             )
         )
-        # print(x - x_new)
+        # logger.debug(x - x_new)
         if C_new >= C:
             lam *= LAM_UP
             if lam >= 1e6:
@@ -1177,7 +1180,7 @@ def lm(
             break
 
         xs = xs_new
-        print(xs)
+        logger.debug(xs)
         x = xs * x_scale
         r = r_new
 
@@ -1232,7 +1235,7 @@ def fix_warp(orig, O=None, split=True, n_points_w=None, n_tries=1):
         dual = False
 
     if dual:
-        print("Bimodal! Splitting page!")
+        logger.debug("Bimodal! Splitting page!")
         pages = crop.split_lines(lines)
 
         n_points_w = 1.2 * np.percentile(np.array([line.width() for line in lines]), 90)
@@ -1242,7 +1245,7 @@ def fix_warp(orig, O=None, split=True, n_points_w=None, n_tries=1):
             debug = cv2.cvtColor(bw, cv2.COLOR_GRAY2BGR)
             for page in pages:
                 page_crop = Crop.from_lines(page).expand(0.005)
-                # print(page_crop)
+                # logger.debug(page_crop)
                 page_crop.draw(debug)
             lib.debug_imwrite("split.png", debug)
 
@@ -1257,7 +1260,7 @@ def fix_warp(orig, O=None, split=True, n_points_w=None, n_tries=1):
 
         result = []
         for i, (page, page_crop) in enumerate(zip(pages, page_crops)):
-            print("==== PAGE {} ====".format(i))
+            logger.debug("==== PAGE {} ====".format(i))
             lib.debug_prefix.append("page{}".format(i))
 
             page_image = page_crop.apply(orig)
@@ -1306,7 +1309,7 @@ class Kim2014(object):
         self.base_points = [line_base_points(line, O) for line in lines]
         # make underlines straight as well
         for line in lines:
-            # if line.underlines: print('underlines:', len(line.underlines))
+            # if line.underlines: logger.debug('underlines:', len(line.underlines))
             for underline in line.underlines:
                 mid_contour = (underline.top_contour() + underline.bottom_contour()) / 2
                 all_mid_points = np.stack(
@@ -1326,7 +1329,7 @@ class Kim2014(object):
         vanishing = np.concatenate([mean_image_vanishing - self.O, [-f]])
         vx, vy, _ = vanishing
         if lib.debug:
-            print(" v:", vanishing)
+            logger.debug(" v:", vanishing)
 
         xz_ratio = -f / vx  # theta_x / theta_z
         norm_theta_sq = (atan2(np.sqrt(vx ** 2 + f ** 2), vy) - pi) ** 2
@@ -1335,9 +1338,9 @@ class Kim2014(object):
         theta_x
 
         # theta_0 = np.array([theta_x, 0, theta_z])
-        # print('theta_0:', theta_0)
-        # print('theta_0 dot ey:', theta_0.dot(np.array([0, 1, 0])))
-        # print('theta_0 dot v:', theta_0.dot(vanishing))
+        # logger.debug('theta_0:', theta_0)
+        # logger.debug('theta_0 dot ey:', theta_0.dot(np.array([0, 1, 0])))
+        # logger.debug('theta_0 dot v:', theta_0.dot(vanishing))
         # theta_0 = np.array([0.1, 0, 0], dtype=np.float64)
         theta_0 = (np.random.rand(3) - 0.5) / 4
 
@@ -1348,7 +1351,7 @@ class Kim2014(object):
         R_0 = R_theta(theta_0)
         _, ROf_y, ROf_z = R_0.dot(Of)
         if lib.debug:
-            print("Rv:", R_0.dot(np.array((vx, vy, -f))))
+            logger.debug("Rv:", R_0.dot(np.array((vx, vy, -f))))
 
         all_surface = [R_0.dot(-points - Of[:, newaxis]) for points in self.base_points]
         l_m_0 = [Ys.mean() for _, Ys, _ in all_surface]
@@ -1379,7 +1382,7 @@ class Kim2014(object):
             if final_norm < 120:
                 break
             else:
-                print("**** BAD RUN. ****")
+                logger.debug("**** BAD RUN. ****")
 
         return self.correct(best_result)
 
@@ -1394,7 +1397,7 @@ class Kim2014(object):
 
         for Y, (_, points_XYZ) in zip(l_m, ts_surface):
             Xs, Ys, _ = points_XYZ
-            # print('Y diffs:', Ys - Y)
+            # logger.debug('Y diffs:', Ys - Y)
             X_min, X_max = Xs.min(), Xs.max()
             line_Xs = np.linspace(X_min, X_max, 100)
             line_Ys = np.full((100,), Y)
@@ -1465,15 +1468,15 @@ class Kim2014(object):
         theta, a_ms, align, T, l_m, g = unpack_args(result.x, n_pages)
         final_norm = norm(result.fun)
 
-        print("*** OPTIMIZATION DONE ***")
-        print("final norm:", final_norm)
-        print("theta:", theta)
+        logger.debug("*** OPTIMIZATION DONE ***")
+        logger.debug("final norm:", final_norm)
+        logger.debug("theta:", theta)
         if lib.debug:
             for a_m in a_ms:
-                print("a_m:", np.concatenate([[0], a_m]))
+                logger.debug("a_m:", np.concatenate([[0], a_m]))
             if isinstance(g, SplitPoly):
-                print("T:", g.T)
-            # print('l_m:', l_m)
+                logger.debug("T:", g.T)
+            # logger.debug('l_m:', l_m)
 
         return final_norm, result
 
