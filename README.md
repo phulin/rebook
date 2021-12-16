@@ -1,6 +1,6 @@
 # Dewarp
 
-### forked from phulin/dewarp. Refer to that Readme for more info of this repo.
+### forked from phulin/rebook. Refer to that Readme for more info of this repo.
 
 ## This is a modified version that is a pip installable with command:
 
