@@ -2,7 +2,7 @@
 ### forked from phulin/rebook. Refer to that Readme for more info of this repo.
 
 ## This is a modified version that is a pip installable with command:
-```
+```bash
 pip install https://github.com/pibit-ai/dewarp/archive/refs/heads/master.zip
 ```
 
