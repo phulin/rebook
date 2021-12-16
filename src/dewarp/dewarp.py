@@ -1208,7 +1208,7 @@ def lsq(func, jac, x_scale):
     return result
 
 
-def kim2014(orig, O=None, split=True, n_points_w=None, n_tries=6):
+def fix_warp(orig, O=None, split=True, n_points_w=None, n_tries=1):
     lib.debug_imwrite("gray.png", binarize.grayscale(orig))
     im = binarize.binarize(orig, algorithm=lambda im: binarize.sauvola_noisy(im, k=0.1))
     global bw
@@ -1498,7 +1498,7 @@ def go(argv):
     lib.debug = True
     lib.debug_prefix = ["dewarp"]
     np.set_printoptions(linewidth=130, precision=4)
-    out = kim2014(im)
+    out = fix_warp(im)
     for i, outimg in enumerate(out):
         # gray = binarize.grayscale(outimg).astype(np.float64)
         # gray -= np.percentile(gray, 2)

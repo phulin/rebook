@@ -9,11 +9,11 @@ pip install https://github.com/pibit-ai/dewarp/archive/refs/heads/master.zip
 ```
 
 ```python
-from dewarp.dewarp import fix_dewarp
+from dewarp.dewarp import fix_warp
 import cv2
 
 warped_img = cv2.imread("<img path>")
-dewarped_img = fix_dewarp(warped_img)
+dewarped_img = fix_warp(warped_img)
 
 ```
 
