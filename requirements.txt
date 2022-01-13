@@ -15,7 +15,7 @@ mkl-service==2.3.0
 networkx==2.4
 numpy==1.18.4
 opencv-python==4.2.0.34
-Pillow==7.1.2
+Pillow==9.0.0
 pyparsing==2.4.7
 python-dateutil==2.8.1
 PyWavelets==1.1.1
