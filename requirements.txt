@@ -13,7 +13,7 @@ mkl-fft==1.0.15
 mkl-random==1.1.0
 mkl-service==2.3.0
 networkx==2.4
-numpy==1.18.4
+numpy==1.22.0
 opencv-python==4.2.0.34
 Pillow==7.1.2
 pyparsing==2.4.7
