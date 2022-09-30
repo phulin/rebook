@@ -6,7 +6,7 @@ fpdf==1.7.2
 freetype-py==2.1.0.post1
 imagecodecs==2020.2.18
 imageio==2.8.0
-joblib==0.15.1
+joblib==1.2.0
 kiwisolver==1.2.0
 matplotlib==3.2.1
 mkl-fft==1.0.15
